@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "uran-engine",   # <-- Zmienione z "engine"
+    "uran-game",     # <-- Zmienione z "game"
+]
+
+[workspace.dependencies]
+# Zewnętrzne
+wgpu = "0.19"
+winit = "0.29"
+glam = "0.25"
+rapier3d = "0.19" # lub rapier2d, w zależności od potrzeb
+tracing = "0.1"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Wewnętrzne (ułatwia linkowanie między crate'ami)
+uran-core = { path = "crates/uran-core" }
+uran-math = { path = "crates/uran-math" }
+uran-ecs = { path = "crates/uran-ecs" }
+uran-asset = { path = "crates/uran-asset" }
+uran-render = { path = "crates/uran-render" }
+uran-physics = { path = "crates/uran-physics" }
+uran-audio = { path = "crates/uran-audio" }
+uran-engine = { path = "uran-engine" }
