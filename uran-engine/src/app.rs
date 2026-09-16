@@ -119,11 +119,10 @@ impl ApplicationHandler for AppState {
 }
 
 impl AppState {
-    // Przykładowy system: przesuwa wszystko, co ma Transform, w prawo
+    // System testowy - NA RAZIE WYŁĄCZONY
     fn run_systems(&mut self) {
-        // hecs pozwala iterować po wszystkich encjach mających dany komponent
-        for (_entity, transform) in self.world.query::<&mut uran_ecs::Transform>().iter() {
-            transform.translation.x += 0.01; // Powolny ruch w prawo!
-        }
+        // for (_entity, transform) in self.world.query::<&mut uran_ecs::Transform>().iter() {
+        //     transform.translation.x += 0.01;
+        // }
     }
 }

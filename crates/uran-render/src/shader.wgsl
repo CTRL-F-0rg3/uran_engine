@@ -8,11 +8,22 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
 }
 
+struct PushConstants {
+    translation: vec4<f32>,
+}
+
+// UWAGA: Brak @group i @binding! 
+var<push_constant> pc: PushConstants;
+
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    // Prosta projekcja: przesuwamy Y w górę, bo w WGPU Y idzie w dół
-    out.clip_position = vec4<f32>(model.position.x, -model.position.y, model.position.z, 1.0);
+    
+    // Przesuwamy wierzchołek o wektor z ECS
+    let pos = model.position + pc.translation.xyz;
+    
+    // Odwracamy Y, bo WGPU ma oś Y skierowaną w dół
+    out.clip_position = vec4<f32>(pos.x, -pos.y, pos.z, 1.0);
     out.color = model.color;
     return out;
 }

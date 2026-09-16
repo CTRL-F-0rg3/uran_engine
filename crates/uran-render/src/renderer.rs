@@ -1,8 +1,14 @@
 use std::sync::Arc;
 use winit::window::Window;
-use wgpu::util::DeviceExt; // Potrzebne dla create_buffer_init
+use wgpu::util::DeviceExt;
 use uran_math::Color;
 use uran_ecs::{World, Transform, Mesh, Material, Visibility};
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PushConstants {
+    translation: [f32; 4],
+}
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -19,7 +25,21 @@ impl Renderer {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor::default(), None).await.unwrap();
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_features: wgpu::Features::PUSH_CONSTANTS,
+                    required_limits: wgpu::Limits {
+                        max_push_constant_size: 256,
+                        ..wgpu::Limits::default()
+                    },
+                    label: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(surface_caps.formats[0]);
@@ -35,17 +55,25 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
+        println!("🔧 DEBUG: Tworzę shader module...");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Triangle Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
+        println!("✅ DEBUG: Shader module stworzony pomyślnie");
 
+        println!("🔧 DEBUG: Tworzę pipeline layout...");
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStages::VERTEX,
+                range: 0..std::mem::size_of::<PushConstants>() as u32,
+            }],
         });
+        println!("✅ DEBUG: Pipeline layout stworzony pomyślnie");
 
+        println!("🔧 DEBUG: Tworzę render pipeline...");
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -67,13 +95,29 @@ impl Renderer {
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // WYŁĄCZ CULLING - niech rysuje wszystko
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
+        println!("✅ DEBUG: Render pipeline stworzony pomyślnie");
 
-        Self { surface, device, queue, config, clear_color, render_pipeline }
+        Self {
+            surface,
+            device,
+            queue,
+            config,
+            clear_color,
+            render_pipeline,
+        }
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -87,16 +131,26 @@ impl Renderer {
     pub fn render(&mut self, world: &World) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
-            Err(_) => return,
+            Err(e) => {
+                println!("⚠️  Błąd pobierania tekstury: {:?}", e);
+                return;
+            }
         };
+        
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
 
-        // --- ETAP 1: Przygotowanie zasobów (PRZED render_pass!) ---
-        let mut buffers_to_draw: Vec<(wgpu::Buffer, u32)> = Vec::new();
+        let mut buffers_to_draw: Vec<(wgpu::Buffer, u32, PushConstants)> = Vec::new();
 
-        for (_, (_transform, mesh, _material, visibility)) in world.query::<(&Transform, &Mesh, &Material, &Visibility)>().iter() {
-            if !visibility.0 { continue; }
+        for (entity, (transform, mesh, _material, visibility)) in world
+            .query::<(&Transform, &Mesh, &Material, &Visibility)>()
+            .iter()
+        {
+            if !visibility.0 {
+                continue;
+            }
 
             let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -104,10 +158,18 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
-            buffers_to_draw.push((vertex_buffer, mesh.vertices.len() as u32));
+            let push_constants = PushConstants {
+                translation: [
+                    transform.translation.x,
+                    transform.translation.y,
+                    transform.translation.z,
+                    0.0,
+                ],
+            };
+
+            buffers_to_draw.push((vertex_buffer, mesh.vertices.len() as u32, push_constants));
         }
 
-        // --- ETAP 2: Renderowanie (TERAZ render_pass, żeby był usunięty PO buffers_to_draw) ---
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -116,8 +178,10 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.clear_color.r as f64, g: self.clear_color.g as f64,
-                            b: self.clear_color.b as f64, a: self.clear_color.a as f64,
+                            r: self.clear_color.r as f64,
+                            g: self.clear_color.g as f64,
+                            b: self.clear_color.b as f64,
+                            a: self.clear_color.a as f64,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -129,13 +193,16 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.render_pipeline);
 
-            for (buffer, vertex_count) in &buffers_to_draw {
+            for (buffer, vertex_count, push_consts) in &buffers_to_draw {
                 render_pass.set_vertex_buffer(0, buffer.slice(..));
+                render_pass.set_push_constants(
+                    wgpu::ShaderStages::VERTEX,
+                    0,
+                    bytemuck::bytes_of(push_consts),
+                );
                 render_pass.draw(0..*vertex_count, 0..1);
             }
-        } // <-- render_pass jest tu usuwany (zwalnia referencje)
-
-        // <-- buffers_to_draw jest tu usuwany (bezpiecznie, bo render_pass już nie żyje)
+        }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
