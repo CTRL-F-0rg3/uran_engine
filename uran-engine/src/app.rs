@@ -11,7 +11,7 @@ use uran_ecs::World;
 
 pub struct App {
     descriptor: WindowDescriptor,
-    world: World, // <-- Nasz świat ECS
+    pub world: World, // <-- Nasz świat ECS
 }
 
 impl App {
