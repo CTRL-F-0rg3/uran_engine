@@ -1,6 +1,9 @@
 [package]
 name = "uran-render"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+wgpu.workspace = true
+uran-math.workspace = true
+winit.workspace = true # Potrzebne dla Arc<Window> i PhysicalSize

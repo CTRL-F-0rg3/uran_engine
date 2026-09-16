@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub use uran_core as core;
+pub use uran_math as math;
+pub use uran_render as render;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod app;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub mod prelude {
+    pub use crate::app::App;
+    pub use crate::core::{windowed, WindowDescriptor};
+    pub use crate::math::Color;
 }

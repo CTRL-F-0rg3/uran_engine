@@ -9,12 +9,13 @@ members = [
 [workspace.dependencies]
 # Zewnętrzne
 wgpu = "0.19"
-winit = "0.29"
+winit = "0.30"
 glam = "0.25"
 rapier3d = "0.19" # lub rapier2d, w zależności od potrzeb
 tracing = "0.1"
 anyhow = "1.0"
 thiserror = "1.0"
+pollster = "0.3"
 
 # Wewnętrzne (ułatwia linkowanie między crate'ami)
 uran-core = { path = "crates/uran-core" }

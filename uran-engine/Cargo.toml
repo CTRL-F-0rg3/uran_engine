@@ -1,6 +1,11 @@
 [package]
 name = "uran-engine"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+uran-core.workspace = true
+uran-math.workspace = true
+uran-render.workspace = true
+pollster = "0.3" # Tylko engine potrzebuje pollster do async init
+winit.workspace = true

@@ -1,0 +1,28 @@
+# --- Rust / Cargo ---
+/target/
+**/*.rs.bk
+Cargo.lock # Opcjonalne: dla silników bibliotecznych często się ignoruje, dla gier zostawia. Zostawiamy na razie.
+
+# --- IDE i Edytory ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- System Operacyjny ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Tymczasowe i logi ---
+*.log
+*.tmp
+*.temp
+
+# --- Opcjonalnie: duże assety (jeśli będą >100MB, lepiej użyć Git LFS) ---
+# /uran-game/assets/**/*.png
+# /uran-game/assets/**/*.mp3

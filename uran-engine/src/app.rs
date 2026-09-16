@@ -1,12 +1,12 @@
+use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes},
 };
-use crate::window::WindowDescriptor;
+use uran_core::WindowDescriptor;
 use uran_render::Renderer;
-use std::sync::Arc;
 
 pub struct App {
     descriptor: WindowDescriptor,
@@ -26,7 +26,7 @@ impl App {
 
     pub fn run(self) {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll); // Poller - ciągłe odświeżanie
+        event_loop.set_control_flow(ControlFlow::Poll); // Poller
 
         let mut app_state = AppState {
             descriptor: self.descriptor,
@@ -58,11 +58,10 @@ impl ApplicationHandler for AppState {
             let window = event_loop.create_window(attrs).unwrap();
             let window = Arc::new(window);
 
-            // Inicjalizacja renderera (async)
             let clear_color = self.descriptor.clear_color;
             let window_clone = window.clone();
             
-            // Używamy pollster do uruchomienia async kodu w sync kontekście
+            // Inicjalizacja wgpu (async) wewnątrz sync pętli
             let renderer = pollster::block_on(Renderer::new(window_clone, clear_color));
             
             self.renderer = Some(renderer);
@@ -96,7 +95,7 @@ impl ApplicationHandler for AppState {
             _ => {}
         }
 
-        // Po każdym zdarzeniu zażądaj redraw, żeby pętla się kręciła
+        // Wymuś ciągłe rysowanie (poller)
         if let Some(window) = &self.window {
             window.request_redraw();
         }
