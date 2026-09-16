@@ -7,15 +7,18 @@ use winit::{
 };
 use uran_core::WindowDescriptor;
 use uran_render::Renderer;
+use uran_ecs::World;
 
 pub struct App {
     descriptor: WindowDescriptor,
+    world: World, // <-- Nasz świat ECS
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             descriptor: WindowDescriptor::default(),
+            world: World::new(),
         }
     }
 
@@ -24,14 +27,24 @@ impl App {
         self
     }
 
-    pub fn run(self) {
+    // Prosty sposób na dodanie systemu (na razie jako closure dla prostoty)
+    // W przyszłości zrobimy to bardziej typowo (jak w Bevy)
+    pub fn add_system(mut self, system: impl FnMut(&mut World) + 'static) -> Self {
+        // Na tym etapie po prostu zapiszemy system w AppState. 
+        // Dla uproszczenia kodu, zaimplementujemy to bezpośrednio w AppState poniżej.
+        // (Pełna implementacja rejestracji systemów wymagałaby wektora funkcji, zrobimy to w v2)
+        self
+    }
+
+    pub fn run(mut self) {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll); // Poller
+        event_loop.set_control_flow(ControlFlow::Poll);
 
         let mut app_state = AppState {
             descriptor: self.descriptor,
             window: None,
             renderer: None,
+            world: self.world, // Przekazujemy świat do stanu aplikacji
         };
 
         event_loop.run_app(&mut app_state).unwrap();
@@ -42,6 +55,7 @@ struct AppState {
     descriptor: WindowDescriptor,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    world: World, // <-- Stan świata jest trzymany tutaj
 }
 
 impl ApplicationHandler for AppState {
@@ -61,7 +75,6 @@ impl ApplicationHandler for AppState {
             let clear_color = self.descriptor.clear_color;
             let window_clone = window.clone();
             
-            // Inicjalizacja wgpu (async) wewnątrz sync pętli
             let renderer = pollster::block_on(Renderer::new(window_clone, clear_color));
             
             self.renderer = Some(renderer);
@@ -88,6 +101,10 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // 1. TUTAJ BĘDZIEMY URUCHAMIAĆ SYSTEMY LOGICZNE (np. ruch)
+                self.run_systems();
+
+                // 2. TUTAJ BĘDZIEMY RYSOWAĆ (w następnym kroku przekażemy &self.world do renderera)
                 if let Some(renderer) = &mut self.renderer {
                     renderer.render();
                 }
@@ -95,9 +112,18 @@ impl ApplicationHandler for AppState {
             _ => {}
         }
 
-        // Wymuś ciągłe rysowanie (poller)
         if let Some(window) = &self.window {
             window.request_redraw();
+        }
+    }
+}
+
+impl AppState {
+    // Przykładowy system: przesuwa wszystko, co ma Transform, w prawo
+    fn run_systems(&mut self) {
+        // hecs pozwala iterować po wszystkich encjach mających dany komponent
+        for (_entity, transform) in self.world.query::<&mut uran_ecs::Transform>().iter() {
+            transform.translation.x += 0.01; // Powolny ruch w prawo!
         }
     }
 }
