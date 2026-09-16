@@ -101,12 +101,12 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // 1. TUTAJ BĘDZIEMY URUCHAMIAĆ SYSTEMY LOGICZNE (np. ruch)
+                // 1. Uruchom systemy (ruch)
                 self.run_systems();
 
-                // 2. TUTAJ BĘDZIEMY RYSOWAĆ (w następnym kroku przekażemy &self.world do renderera)
+                // 2. Przekaż świat do renderera!
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render();
+                    renderer.render(&self.world); // <-- ZMIANA TUTAJ
                 }
             }
             _ => {}

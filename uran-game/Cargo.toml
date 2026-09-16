@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 uran-engine.workspace = true
-uran-ecs.workspace = true # Żeby mieć dostęp do Transform
-uran-math.workspace = true # Żeby mieć dostęp do Vec3
+uran-ecs.workspace = true
+uran-math.workspace = true
+uran-render.workspace = true  # <-- DODAJ TĘ LINIĘ

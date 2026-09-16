@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 wgpu.workspace = true
 uran-math.workspace = true
-winit.workspace = true # Potrzebne dla Arc<Window> i PhysicalSize
+uran-ecs.workspace = true    
+winit.workspace = true
+bytemuck.workspace = true    

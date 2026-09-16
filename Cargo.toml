@@ -16,6 +16,7 @@ tracing = "0.1"
 anyhow = "1.0"
 thiserror = "1.0"
 pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
 
 # Wewnętrzne (ułatwia linkowanie między crate'ami)
 uran-core = { path = "crates/uran-core" }
