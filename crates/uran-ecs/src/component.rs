@@ -20,6 +20,7 @@ pub struct Mesh {
     pub vertices: Vec<Vertex>,
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vertex {
     pub position: [f32; 3],

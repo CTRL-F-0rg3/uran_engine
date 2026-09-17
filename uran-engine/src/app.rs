@@ -78,6 +78,12 @@ impl ApplicationHandler for AppState {
             let renderer = pollster::block_on(Renderer::new(window_clone, clear_color));
             
             self.renderer = Some(renderer);
+
+            // Poproś od razu o pierwszą klatkę - na niektórych platformach
+            // (np. Wayland) okno nie dostaje żadnego WindowEvent zaraz po
+            // utworzeniu, więc bez tego renderer nigdy nie narysowałby
+            // pierwszej (czarnej) klatki.
+            window.request_redraw();
             self.window = Some(window);
         }
     }

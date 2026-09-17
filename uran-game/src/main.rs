@@ -9,11 +9,12 @@ fn main() {
             windowed(1280, 720)
                 .title("Uran Engine - Fluent Mesh API")
                 .resizable(true)
-                .background(0x1A1A2E)
+                .background(0x000000) // Całkowicie czarne tło
         );
 
-    // --- ZMIANA: Większy trójkąt (size=1.0) i na środku ekranu (x=0.0) ---
-    let (mesh, material, visibility) = MeshBuilder::triangle(0.0, 0.0, 0.0, 5.0) // OGROMNY trójkąt
+    // Trójkąt w rozsądnym rozmiarze (współrzędne NDC mieszczą się w -1..1),
+    // wyśrodkowany na ekranie.
+    let (mesh, material, visibility) = MeshBuilder::triangle(0.0, 0.0, 0.0, 0.5)
         .color(Color::from_hex(0xFFAA00))
         .visibility(true)
         .is_shaded(false)
