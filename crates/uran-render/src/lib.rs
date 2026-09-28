@@ -13,6 +13,7 @@
 pub mod backend;
 pub mod batch;
 pub mod camera;
+pub mod compute;
 pub mod graphics;
 pub mod mesh_builder;
 pub mod renderer;
@@ -23,7 +24,8 @@ pub use batch::{
     DrawList, Globals, MeshDraw, MeshGeometry, MeshPushConstants, NineSliceDraw, SpriteDraw,
     SpriteInstance, TextAlign, TextDraw, TextureKey,
 };
-pub use camera::Camera2d;
+pub use camera::{screen_matrix, Camera2d};
+pub use compute::{GpuSim, GpuUnit, SimParams, SimStats, Team, UnitFlags};
 pub use graphics::{DrawStyle, Graphics};
 pub use mesh_builder::MeshBuilder;
 pub use renderer::{FrameStats, Renderer, ScreenshotRequest};

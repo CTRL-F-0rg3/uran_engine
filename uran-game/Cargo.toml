@@ -13,3 +13,4 @@ uran-ecs.workspace = true
 uran-math.workspace = true
 uran-render.workspace = true
 uran-asset.workspace = true
+wgpu.workspace = true

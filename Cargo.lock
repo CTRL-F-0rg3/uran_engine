@@ -1935,6 +1935,7 @@ dependencies = [
  "uran-ecs",
  "uran-math",
  "uran-render",
+ "wgpu",
  "winit",
 ]
 
@@ -1947,6 +1948,7 @@ dependencies = [
  "uran-engine",
  "uran-math",
  "uran-render",
+ "wgpu",
 ]
 
 [[package]]

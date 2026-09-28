@@ -31,6 +31,9 @@ pub struct App {
     systems: Vec<SystemFn>,
     startup_systems: Vec<SystemFn>,
     camera: Camera2d,
+    font: Option<uran_asset::Handle<uran_asset::FontData>>,
+    /// Pojemność symulacji GPU (ustawiana przed uruchomieniem pętli).
+    gpu_sim_units: Option<usize>,
     screenshot: Option<(std::path::PathBuf, u32)>,
 }
 
@@ -49,6 +52,8 @@ impl App {
             systems: Vec::new(),
             startup_systems: Vec::new(),
             camera: Camera2d::new(),
+            font: None,
+            gpu_sim_units: None,
             screenshot: None,
         }
     }
@@ -88,6 +93,23 @@ impl App {
         self
     }
 
+    /// Ustawia czcionkę HUD-u dostępną w `Ctx::font`.
+    ///
+    /// Wartość kopiujemy do stanu, bo systemy nie mają dostępu do
+    /// `AssetServer` w trakcie rysowania.
+    pub fn font(mut self, font: uran_asset::Handle<uran_asset::FontData>) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Włącza symulację jednostek na GPU na `capacity` jednostek.
+    ///
+    /// Bufor alokowany jest raz; potem pozycje żyją już tylko na karcie.
+    pub fn gpu_sim_units(mut self, capacity: usize) -> Self {
+        self.gpu_sim_units = Some(capacity);
+        self
+    }
+
     /// Zapisze klatkę do pliku PNG po `frames` klatkach i zakończy aplikację.
     ///
     /// Przydatne do zautomatyzowanych testów graficznych i w CI.
@@ -120,6 +142,8 @@ impl App {
             clear_color,
             rendering_enabled: true,
             startup_done: false,
+            font: self.font,
+            gpu_sim_units: self.gpu_sim_units,
             screenshot: self.screenshot,
             exit_after_frames: None,
             exit_requested: false,
@@ -150,6 +174,10 @@ struct AppState {
     clear_color: uran_math::Color,
     rendering_enabled: bool,
     startup_done: bool,
+    /// Czcionka HUD-u — współdzielona przez wszystkie systemy.
+    pub font: Option<uran_asset::Handle<uran_asset::FontData>>,
+    /// Pojemność symulacji GPU; używana raz przy starcie okna.
+    pub gpu_sim_units: Option<usize>,
     /// Zgłoszenie zrzutu ekranu — po N klatkach zapisuje PNG i kończy grę.
     screenshot: Option<(std::path::PathBuf, u32)>,
     /// Ile klatek zostało do zamknięcia po zrzucie.
@@ -245,6 +273,11 @@ impl AppState {
     /// `self` zamiast poszczególnych pól i nie da się jednocześnie
     /// pożyczyć `self.systems`.
     fn with_ctx(&mut self, systems: &mut [SystemFn]) {
+        // Symulator pożyczamy z renderera na czas systemów. Robimy to
+        // przez `take`, bo `self.renderer` i `self.draw_list` muszą być
+        // pożyczone w tym samym `Ctx`.
+        let mut renderer = self.renderer.take();
+
         let mut ctx = Ctx {
             world: &mut self.world,
             gfx: Graphics::new(&mut self.draw_list),
@@ -256,6 +289,8 @@ impl AppState {
             clear_color: self.clear_color,
             rendering_enabled: self.rendering_enabled,
             frame: self.time.frame(),
+            font: self.font,
+            renderer: renderer.as_mut(),
         };
 
         for system in systems.iter_mut() {
@@ -268,6 +303,9 @@ impl AppState {
         self.clear_color = ctx.clear_color;
         self.rendering_enabled = ctx.rendering_enabled;
         self.window_state = ctx.window;
+        drop(ctx);
+        // renderera oddajemy z powrotem, wraz z ewentualnymi zmianami symulacji
+        self.renderer = renderer;
     }
 }
 
@@ -308,7 +346,19 @@ impl ApplicationHandler for AppState {
             self.descriptor.vsync,
             self.descriptor.samples,
         )) {
-            Ok(renderer) => Some(renderer),
+            Ok(mut renderer) => {
+                // Symulacja GPU alokuje bufory raz, przy starcie — dlatego
+                // robimy to zanim pierwsza klatka przejdzie przez `tick`.
+                if let Some(capacity) = gpu_sim_units {
+                    renderer.enable_gpu_sim(capacity);
+                    println!(
+                        "🖥  symulacja GPU: bufor na {capacity} jednostek ({:.1} MB)",
+                        capacity as f64 * std::mem::size_of::<uran_render::GpuUnit>() as f64
+                            / (1024.0 * 1024.0)
+                    );
+                }
+                Some(renderer)
+            }
             Err(e) => {
                 eprintln!("❌ inicjalizacja renderera nie powiodła się: {e}");
                 event_loop.exit();

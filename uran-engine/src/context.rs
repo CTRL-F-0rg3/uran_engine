@@ -2,6 +2,7 @@
 
 use uran_asset::{AssetServer, FontData, Handle, Image};
 use uran_core::{Input, Time};
+use winit::event::MouseButton;
 use uran_ecs::World;
 use uran_math::Vec2;
 use uran_render::{Camera2d, Graphics};
@@ -31,6 +32,15 @@ pub struct Ctx<'a> {
     pub rendering_enabled: bool,
     /// Licznik klatek od startu (alias `time.frame()`).
     pub frame: u64,
+    /// Czcionka do HUD-u (wspólna dla wszystkich systemów).
+    pub font: Option<uran_asset::Handle<FontData>>,
+    /// Renderer (pożyczany). Daje dostęp do symulacji GPU i kolejki.
+    ///
+    /// Pożyczamy cały renderer, a nie sam symulator, bo `wgpu::Queue`
+    /// nie implementuje `Clone` — kolejki nie da się skopiować z
+    /// wnętrza renderera, a `write_buffer` jest potrzebny przy wgrywaniu
+    /// armii. Pozycje jednostek na CPU nie wgrywamy w klatce w ogóle.
+    pub renderer: Option<&'a mut uran_render::Renderer>,
 }
 
 /// Rozmiar okna w jednostkach renderera.
@@ -79,6 +89,63 @@ impl<'a> Ctx<'a> {
     /// Delta czasu w sekundach — skrót najczęstszej operacji w grze.
     pub fn dt(&self) -> f32 {
         self.time.delta_seconds()
+    }
+
+    /// Wskazuje pozycję myszy w świecie (używane przez dowodzenie armią).
+    pub fn mouse_world(&self) -> uran_math::Vec2 {
+        self.camera
+            .screen_to_world(self.input.mouse_position(), self.window.size)
+    }
+
+    /// Ostatnie statystyki symulacji GPU (mogą być kilka klatek stare —
+    /// wynikają z asynchronicznego odczytu liczników).
+    pub fn sim_stats(&self) -> uran_render::SimStats {
+        self.sim().map(|s| s.stats()).unwrap_or_default()
+    }
+
+    /// Symulator jednostek (gdy gra go używa).
+    pub fn sim(&self) -> Option<&uran_render::GpuSim> {
+        self.renderer.as_ref().and_then(|r| r.sim())
+    }
+
+    /// Symulator jednostek do modyfikacji parametrów.
+    pub fn sim_mut(&mut self) -> Option<&mut uran_render::GpuSim> {
+        self.renderer.as_mut().and_then(|r| r.sim_mut())
+    }
+
+    /// Kolejka GPU — potrzebna do jednorazowego wgrania buforów symulacji.
+    ///
+    /// W klatce nie wolno używać jej do przesyłania pozycji jednostek:
+    /// po to mamy compute shader.
+    pub fn queue(&self) -> Option<&wgpu::Queue> {
+        self.renderer.as_ref().map(|r| r.queue())
+    }
+
+    /// Wskrzesza jednostki z rezerwy (mały zapis do bufora, nie cała armia).
+    pub fn reinforce_range(
+        &mut self,
+        from: usize,
+        to: usize,
+        at: uran_math::Vec2,
+        team: uran_render::Team,
+    ) {
+        if let Some(r) = self.renderer.as_mut() {
+            r.revive_sim_range(from, to, at, team);
+        }
+    }
+
+    /// Wgrywa armię na GPU (jednorazowo, przy starcie gry).
+    ///
+    /// Pozycje po tym wywołaniu już nigdy nie wracają na CPU.
+    pub fn upload_army(&mut self, army: &[uran_render::GpuUnit]) {
+        if let Some(r) = self.renderer.as_mut() {
+            r.upload_sim_units(army);
+        }
+    }
+
+    /// Czy przytrzymano lewy przycisk myszy (rozkaz formacji).
+    pub fn mouse_held(&self) -> bool {
+        self.input.mouse_pressed(MouseButton::Left)
     }
 }
 

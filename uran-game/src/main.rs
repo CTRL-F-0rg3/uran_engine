@@ -1,13 +1,18 @@
-//! Demo silnika: mała arena z shooterem, pokazująca cały stack API.
+//! Demo silnika: mała arena z shooterem + armia piechoty na GPU.
 //!
 //! Uruchomienie: `cargo run -p uran-game`
 //! Sterowanie: WASD/strzałki — ruch, mysz — celowanie, LPM — strzał,
+//! RMB — nowy punkt zgrupowania piechoty, F — uzupełnienie z rezerwy,
 //! P — pauza, R — restart, Esc — wyjście.
+
+mod infantry;
 
 use std::f32::consts::TAU;
 
 use uran_engine::prelude::*;
 use uran_render::TextAlign;
+
+use crate::infantry::Infantry;
 
 /// Rozmiar świata (arena); kamera pokazuje całość.
 const ARENA: Rect = Rect::new(Vec2::new(-900.0, -560.0), Vec2::new(900.0, 560.0));
@@ -42,6 +47,8 @@ struct Game {
     /// animacja przejścia kolorowego „trafienia"
     hit_flash: f32,
 
+    /// Armia piechoty symulowana na GPU.
+    infantry: Infantry,
     font: Option<Font>,
     time: f32,
     /// Stan generatora liczb losowych (xorshift32).
@@ -75,6 +82,7 @@ impl Game {
             bullets: Vec::new(),
             particles: Vec::new(),
             hit_flash: 0.0,
+            infantry: Infantry::new(infantry::InfantryConfig::default()),
             font: None,
             time: 0.0,
             rng_state: 0x1234_5678,
@@ -140,6 +148,9 @@ fn update(ctx: &mut Ctx, game: &mut Game) {
         .player_pos
         .y
         .clamp(ARENA.min.y + PLAYER_RADIUS, ARENA.max.y - PLAYER_RADIUS);
+
+    // --- piechota: rozkazy + parametry do GPU (96 B na klatkę) ---
+    game.infantry.update(ctx, dt);
 
     // --- celowanie: pozycja myszy w przestrzeni świata ---
     let aim = ctx.camera.screen_to_world(ctx.input.mouse_position(), ctx.window.size);
@@ -306,6 +317,10 @@ fn draw(ctx: &mut Ctx, game: &mut Game) {
     let ox = (game.rand() - 0.5) * shake;
     let oy = (game.rand() - 0.5) * shake;
 
+    // --- armia: marker punktu zgrupowania (sama armia rysuje się
+    // automatycznie z bufora GPU, poza draw listą) ---
+    game.infantry.draw_rally_marker(ctx);
+
     // --- arena ---
     ctx.gfx
         .color(Color::from_hex(0x141821))
@@ -396,6 +411,10 @@ fn draw(ctx: &mut Ctx, game: &mut Game) {
 fn draw_hud(ctx: &mut Ctx, game: &Game) {
     let size = ctx.window.logical_size();
     let Some(font) = game.font else { return };
+    ctx.gfx.screen_space().layer(100);
+
+    // --- piechota symulowana na GPU ---
+    game.infantry.draw_hud(ctx);
     ctx.gfx.screen_space().layer(100);
 
     // --- pasek zdrowia ---
@@ -526,6 +545,13 @@ fn setup(ctx: &mut Ctx, game: &mut Game) {
         eprintln!("⚠️  nie znaleziono żadnej czcionki TTF — HUD będzie pusty");
     }
 
+    // --- armia piechoty na GPU ---
+    // Armia jest alokowana raz (`.gpu_sim_units`), a tutaj wgrywamy ją
+    // w poszczególne sloty. Od tej chwili pozycje już nigdy nie wracają na CPU.
+    if let Some(sim) = ctx.sim.as_deref_mut() {
+        game.infantry.install(sim, ctx.queue(), ARENA);
+    }
+
     // kamera pokazuje całą arenę
     ctx.camera.fit_world(ARENA, ctx.window.size);
     ctx.clear_color = Color::from_hex(0x0A0C12);
@@ -585,6 +611,9 @@ fn main() {
                 .vsync(true)
                 .samples(1),
         )
+        // Armia 100k żołnierzy liczona na GPU: bufory alokowane raz
+        // przy starcie okna, potem CPU wysyła tylko 96 B parametrów.
+        .gpu_sim_units(infantry::ARMY_CAPACITY)
         // `--screenshot <ścieżka>` zapisuje klatkę i kończy grę (do testów)
         .screenshot(screenshot_path(), 20)
         .add_startup_system(setup_system)

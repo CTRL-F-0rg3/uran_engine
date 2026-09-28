@@ -18,6 +18,7 @@ use crate::batch::{
     DrawList, Globals, MeshGeometry, MeshPushConstants, SpriteDraw, SpriteInstance, TextureKey,
 };
 use crate::camera::Camera2d;
+use crate::compute::GpuSim;
 use crate::text::FontRegistry;
 
 /// Statystyki pojedynczej klatki (do HUD-a i debugu).
@@ -85,6 +86,8 @@ pub struct Renderer {
     frame_index: u64,
     /// Ile klatek siatka może być nieużywana, zanim ją zwolnimy.
     mesh_ttl: u64,
+    /// Symulacja jednostek na GPU (pozycje nigdy nie wracają na CPU).
+    sim: Option<GpuSim>,
     /// Zgłoszenie zrzutu ekranu (patrz `Renderer::request_screenshot`).
     screenshot: Option<ScreenshotRequest>,
     /// Czy atlas czcionki został już zrzucony do pliku (URAN_DUMP_ATLAS).
@@ -185,6 +188,7 @@ impl Renderer {
             msaa_texture: None,
             frame_index: 0,
             mesh_ttl: 600,
+            sim: None,
             screenshot: None,
             atlas_dumped: false,
             stats: FrameStats::default(),
@@ -197,6 +201,62 @@ impl Renderer {
     /// „zrób zrzut ekranu" w grze.
     pub fn request_screenshot(&mut self, path: impl Into<std::path::PathBuf>, frames: u32) {
         self.screenshot = Some(ScreenshotRequest { path: path.into(), frames });
+    }
+
+    /// Włącza symulację jednostek na GPU.
+    ///
+    /// Bufor na `capacity` jednostek alokowany jest raz. Od tego momentu
+    /// pozycje żyją wyłącznie na karcie: CPU wysyła w klatce 96 B
+    /// parametrów, a pozycje czyta shader wierzchołkowy.
+    pub fn enable_gpu_sim(&mut self, capacity: usize) {
+        let sim = GpuSim::new(&self.gpu, capacity, self.pipelines.format, self.pipelines.samples);
+        self.sim = Some(sim);
+    }
+
+    /// Wyłącza symulację GPU (zwalnia bufory).
+    pub fn disable_gpu_sim(&mut self) {
+        self.sim = None;
+    }
+
+    /// Czy symulacja GPU jest włączona.
+    pub fn has_gpu_sim(&self) -> bool {
+        self.sim.is_some()
+    }
+
+    /// Kolejka GPU (do jednorazowego wgrywania buforów symulacji).
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.gpu.queue
+    }
+
+    /// Wskrzesza jednostki w zakresie indeksów, stawiając je w `at`.
+    ///
+    /// Wgrywamy tylko te sloty (48 B na jednostkę), a nie całą armię.
+    pub fn revive_sim_range(
+        &mut self,
+        from: usize,
+        to: usize,
+        at: uran_math::Vec2,
+        team: crate::Team,
+    ) {
+        if let Some(sim) = &mut self.sim {
+            sim.revive_range(&self.gpu.queue, from..to, at, team);
+        }
+    }
+
+    /// Wgrywa armię na GPU. Pozycje zostają już tylko na karcie.
+    pub fn upload_sim_units(&mut self, units: &[crate::GpuUnit]) {
+        if let Some(sim) = &mut self.sim {
+            sim.upload_units(&self.gpu.queue, units);
+        }
+    }
+
+    /// Symulator jednostek (do parametrów, wgrywania armii, statystyk).
+    pub fn sim(&self) -> Option<&GpuSim> {
+        self.sim.as_ref()
+    }
+
+    pub fn sim_mut(&mut self) -> Option<&mut GpuSim> {
+        self.sim.as_mut()
     }
 
     /// Rozmiar okna w fizycznych pikselach.
@@ -489,6 +549,12 @@ impl Renderer {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Uran Encoder") });
 
+        // 5a) symulacja jednostek na GPU — compute w tym samym encoderze,
+        // więc w tej samej klatce render pass widzi już nowe pozycje
+        if let Some(sim) = &mut self.sim {
+            sim.step(&mut encoder, &self.gpu.queue);
+        }
+
         let mut stats = FrameStats {
             sprites: sprites.len(),
             meshes: list.meshes().len(),
@@ -520,6 +586,16 @@ impl Renderer {
             // faza rysowania — obie metody tylko odczytują stan renderera
             stats.draw_calls += self.draw_sprites(&mut pass, list.sprites(), &mut stats);
             stats.draw_calls += self.draw_meshes(&mut pass, list);
+
+            // armia symulowana na GPU — jeden draw call, pozycje czytane
+            // wprost z bufora jednostek (bez udziału CPU)
+            let world_globals = &self.globals_bind_group;
+            if let Some(sim) = &self.sim {
+                if let Some(n) = sim.draw(&mut pass, world_globals) {
+                    stats.draw_calls += 1;
+                    stats.instances += n;
+                }
+            }
         }
 
         self.gpu.queue.submit(Some(encoder.finish()));
