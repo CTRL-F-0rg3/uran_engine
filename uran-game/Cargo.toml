@@ -3,8 +3,13 @@ name = "uran-game"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "uran-game"
+path = "src/main.rs"
+
 [dependencies]
 uran-engine.workspace = true
 uran-ecs.workspace = true
 uran-math.workspace = true
-uran-render.workspace = true  # <-- DODAJ TĘ LINIĘ
+uran-render.workspace = true
+uran-asset.workspace = true

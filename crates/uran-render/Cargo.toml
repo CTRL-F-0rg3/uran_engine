@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 wgpu.workspace = true
-uran-math.workspace = true
-uran-ecs.workspace = true    
 winit.workspace = true
-bytemuck.workspace = true    
+bytemuck.workspace = true
+ab_glyph.workspace = true
+uran-math.workspace = true
+uran-ecs.workspace = true
+uran-asset.workspace = true

@@ -11,7 +11,9 @@ members = [
 wgpu = "0.19"
 winit = "0.30"
 glam = "0.25"
-rapier3d = "0.19" # lub rapier2d, w zależności od potrzeb
+ab_glyph = "0.2"      # rasteryzacja glifów (font atlas)
+image = { version = "0.25", default-features = false, features = ["png"] }
+rapier2d = "0.19"     # fizyka 2D (na razie nieużywana)
 tracing = "0.1"
 anyhow = "1.0"
 thiserror = "1.0"

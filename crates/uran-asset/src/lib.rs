@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! System assetów: uchwyty, ładowanie obrazów i czcionek, cache po ścieżce.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod asset_server;
+pub mod handle;
+pub mod loader;
+pub mod server;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use asset_server::AssetServer;
+pub use handle::{Handle, HandleId};
+pub use loader::{AssetError, FontData, Image};
+pub use server::Assets;

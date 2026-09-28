@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 hecs = "0.10"
 uran-math.workspace = true
-bytemuck.workspace = true  
+uran-asset.workspace = true
+bytemuck.workspace = true
