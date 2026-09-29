@@ -84,7 +84,10 @@ impl Rect {
     }
 
     pub fn contains(&self, point: Vec2) -> bool {
-        point.x >= self.min.x && point.x <= self.max.x && point.y >= self.min.y && point.y <= self.max.y
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
     }
 
     pub fn contains_rect(&self, other: &Rect) -> bool {

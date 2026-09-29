@@ -22,7 +22,11 @@ impl Vertex {
     /// Normalną trzeba ustawić świadomie — „normalna = pozycja" daje
     /// złe oświetlenie i cicho psuje wygląd bryły.
     pub fn new(position: Vec3, normal: Vec3, color: [f32; 3]) -> Self {
-        Self { position: position.to_array(), normal: normal.to_array(), color }
+        Self {
+            position: position.to_array(),
+            normal: normal.to_array(),
+            color,
+        }
     }
 
     pub fn pos(&self) -> Vec3 {
@@ -111,11 +115,13 @@ impl GpuMesh {
             (None, 0)
         } else {
             (
-                Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{label} (indeksy)")),
-                    contents: bytemuck::cast_slice(&mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                })),
+                Some(
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("{label} (indeksy)")),
+                        contents: bytemuck::cast_slice(&mesh.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    }),
+                ),
                 mesh.indices.len() as u32,
             )
         };
@@ -141,12 +147,7 @@ impl GpuMesh {
     /// wymaga `BufferSlice<'r>`, więc slice musi żyć tak długo jak pass.
     /// Stąd też pożyczka buforów jest na czas rysowania, a nie na czas
     /// całej klatki.
-    pub fn draw<'r>(
-        &'r self,
-        pass: &mut wgpu::RenderPass<'r>,
-        slot: u32,
-        base_instance: u32,
-    ) {
+    pub fn draw<'r>(&'r self, pass: &mut wgpu::RenderPass<'r>, slot: u32, base_instance: u32) {
         pass.set_vertex_buffer(slot, self.vertex_buffer.slice(..));
         match &self.index_buffer {
             Some(ib) => {
@@ -209,9 +210,8 @@ pub struct InstanceModel {
 /// na końcu roll (przechył na boki). Inna kolejność daje „zaplątany"
 /// obrót, którego nie da się opisać trzema kątami.
 pub fn model_matrix(position: Vec3, yaw: f32, pitch: f32, roll: f32, scale: Vec3) -> Mat4 {
-    let rotation = Quat::from_rotation_y(yaw)
-        * Quat::from_rotation_x(pitch)
-        * Quat::from_rotation_z(roll);
+    let rotation =
+        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * Quat::from_rotation_z(roll);
     Mat4::from_translation(position)
         * Mat4::from_mat3(Mat3::from_quat(rotation))
         * Mat4::from_scale(scale)
@@ -302,7 +302,10 @@ mod tests {
         for (i, a) in c.iter().enumerate() {
             for (j, b) in c.iter().enumerate() {
                 if i != j {
-                    assert!((*a - *b).length() > 1e-6, "narożniki {i} i {j} pokrywają się");
+                    assert!(
+                        (*a - *b).length() > 1e-6,
+                        "narożniki {i} i {j} pokrywają się"
+                    );
                 }
             }
         }

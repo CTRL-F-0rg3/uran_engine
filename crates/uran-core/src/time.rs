@@ -113,8 +113,10 @@ impl Time {
     /// Suwak „co N sekundy" — np. `should_tick(0.5)` na autosave.
     pub fn interval(&self, seconds: f32) -> bool {
         let period = seconds.max(0.0);
-        period > 0.0 && (self.frame == 1 || (self.elapsed_seconds() / period).floor()
-            > (self.elapsed_seconds() - self.delta_seconds()) / period)
+        period > 0.0
+            && (self.frame == 1
+                || (self.elapsed_seconds() / period).floor()
+                    > (self.elapsed_seconds() - self.delta_seconds()) / period)
     }
 }
 
@@ -146,7 +148,10 @@ mod tests {
         t.set_max_delta(Duration::from_millis(1));
         std::thread::sleep(Duration::from_millis(5));
         t.tick();
-        assert!(t.delta() <= Duration::from_millis(1), "delta nie może urosnąć powyżej limitu");
+        assert!(
+            t.delta() <= Duration::from_millis(1),
+            "delta nie może urosnąć powyżej limitu"
+        );
     }
 
     #[test]

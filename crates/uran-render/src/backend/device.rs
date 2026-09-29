@@ -21,7 +21,9 @@ impl fmt::Display for RenderError {
             Self::Surface(e) => write!(f, "nie udało się utworzyć powierzchni: {e}"),
             Self::Adapter(name) => write!(f, "brak adaptera GPU: {name}"),
             Self::Device(e) => write!(f, "nie udało się utworzyć urządzenia: {e}"),
-            Self::NoSurfaceFormat => write!(f, "adapter nie udostępnia żadnego formatu powierzchni"),
+            Self::NoSurfaceFormat => {
+                write!(f, "adapter nie udostępnia żadnego formatu powierzchni")
+            }
         }
     }
 }
@@ -58,11 +60,7 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    pub async fn new(
-        window: Arc<Window>,
-        vsync: bool,
-        _samples: u32,
-    ) -> Result<Self, RenderError> {
+    pub async fn new(window: Arc<Window>, vsync: bool, _samples: u32) -> Result<Self, RenderError> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -77,7 +75,9 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| RenderError::Adapter("żaden adapter nie pasuje do tej powierzchni".into()))?;
+            .ok_or_else(|| {
+                RenderError::Adapter("żaden adapter nie pasuje do tej powierzchni".into())
+            })?;
 
         let (device, queue) = adapter
             .request_device(

@@ -110,7 +110,6 @@ impl Game {
     }
 }
 
-
 /// Ruch, strzelanie i kolizje (logika gry).
 fn update(ctx: &mut Ctx, game: &mut Game) {
     let dt = ctx.dt();
@@ -137,7 +136,11 @@ fn update(ctx: &mut Ctx, game: &mut Game) {
         ctx.input.axis(Key::KeyA, Key::KeyD) + ctx.input.axis(Key::ArrowLeft, Key::ArrowRight),
         ctx.input.axis(Key::KeyS, Key::KeyW) + ctx.input.axis(Key::ArrowDown, Key::ArrowUp),
     );
-    let dir = if dir.length_squared() > 1.0 { dir.normalize() } else { dir };
+    let dir = if dir.length_squared() > 1.0 {
+        dir.normalize()
+    } else {
+        dir
+    };
     game.player_pos += dir * PLAYER_SPEED * dt;
     // arena jest prostokątem — pilnujemy granic
     game.player_pos.x = game
@@ -153,14 +156,17 @@ fn update(ctx: &mut Ctx, game: &mut Game) {
     game.infantry.update(ctx, dt);
 
     // --- celowanie: pozycja myszy w przestrzeni świata ---
-    let aim = ctx.camera.screen_to_world(ctx.input.mouse_position(), ctx.window.size);
+    let aim = ctx
+        .camera
+        .screen_to_world(ctx.input.mouse_position(), ctx.window.size);
 
     // --- strzał ---
     game.shooting = ctx.input.primary_pressed();
     game.fire_cooldown -= dt;
     if game.shooting && game.fire_cooldown <= 0.0 && game.bullets.len() < MAX_BULLETS {
         let direction = (aim - game.player_pos).normalize_or_zero();
-        game.bullets.push(game.player_pos + direction * (PLAYER_RADIUS + BULLET_RADIUS));
+        game.bullets
+            .push(game.player_pos + direction * (PLAYER_RADIUS + BULLET_RADIUS));
         game.fire_cooldown = 0.13;
         game.shake = (game.shake + 1.2).min(3.0);
         spawn_particles(
@@ -209,10 +215,7 @@ fn update(ctx: &mut Ctx, game: &mut Game) {
                 game.score += 50;
                 game.shake = (game.shake + 4.0).min(8.0);
                 // losowy kierunek liczymy PRZED pożyczeniem `game.particles`
-                let burst = Vec2::new(
-                    game.rand_range(-1.0, 1.0),
-                    game.rand_range(-1.0, 1.0),
-                );
+                let burst = Vec2::new(game.rand_range(-1.0, 1.0), game.rand_range(-1.0, 1.0));
                 spawn_particles(
                     &mut game.particles,
                     enemy_pos,
@@ -364,11 +367,12 @@ fn draw(ctx: &mut Ctx, game: &mut Game) {
     ctx.gfx.layer(10);
     for enemy in game.enemies.iter() {
         let pos = *enemy + Vec2::new(ox, oy);
-        ctx.gfx.color(Color::from_hex(0xFF4D5E)).draw_circle(pos, ENEMY_RADIUS);
+        ctx.gfx
+            .color(Color::from_hex(0xFF4D5E))
+            .draw_circle(pos, ENEMY_RADIUS);
         ctx.gfx
             .color(Color::from_hex(0xFF9AA4))
             .draw_circle(pos + Vec2::new(0.0, 5.0), ENEMY_RADIUS * 0.35);
-
     }
     // --- gracz ---
     ctx.gfx.layer(30);
@@ -380,13 +384,17 @@ fn draw(ctx: &mut Ctx, game: &mut Game) {
         .draw_circle(player, PLAYER_RADIUS * 2.4);
     ctx.gfx.blend(BlendMode::Alpha);
     let player_color = Color::from_hex(0x3D7BFF).lerp(Color::from_hex(0xFF5566), game.hit_flash);
-    ctx.gfx.color(player_color).draw_circle(player, PLAYER_RADIUS);
+    ctx.gfx
+        .color(player_color)
+        .draw_circle(player, PLAYER_RADIUS);
     ctx.gfx
         .color(Color::WHITE.with_alpha(0.7))
         .draw_circle(player + Vec2::new(-5.0, 6.0), PLAYER_RADIUS * 0.32);
 
     // lufa w stronę kursora + celownik
-    let aim = ctx.camera.screen_to_world(ctx.input.mouse_position(), ctx.window.size);
+    let aim = ctx
+        .camera
+        .screen_to_world(ctx.input.mouse_position(), ctx.window.size);
     let to_aim = (aim - game.player_pos).normalize_or_zero();
     ctx.gfx.color(Color::from_hex(0xE8EEFF)).draw_line(
         player + to_aim * PLAYER_RADIUS * 0.6,
@@ -394,12 +402,15 @@ fn draw(ctx: &mut Ctx, game: &mut Game) {
         6.0,
     );
     let aim_w = aim + Vec2::new(ox, oy);
-    ctx.gfx.layer(40).color(Color::from_hex(0xFFFFFF).with_alpha(0.65));
+    ctx.gfx
+        .layer(40)
+        .color(Color::from_hex(0xFFFFFF).with_alpha(0.65));
     ctx.gfx.draw_ring(aim_w, 11.0, 2.0);
     for a in 0..4 {
         let angle = a as f32 * (TAU / 4.0) + game.time * 0.5;
         let dir = Vec2::new(angle.cos(), angle.sin());
-        ctx.gfx.draw_line(aim_w + dir * 15.0, aim_w + dir * 20.0, 2.0);
+        ctx.gfx
+            .draw_line(aim_w + dir * 15.0, aim_w + dir * 20.0, 2.0);
     }
 
     draw_hud(ctx, game);
@@ -421,7 +432,10 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
     ctx.gfx.screen_space().layer(100);
 
     // --- pasek zdrowia ---
-    let bar = Rect::new(Vec2::new(24.0, size.y - 54.0), Vec2::new(304.0, size.y - 30.0));
+    let bar = Rect::new(
+        Vec2::new(24.0, size.y - 54.0),
+        Vec2::new(304.0, size.y - 30.0),
+    );
     ctx.gfx
         .color(Color::from_hex(0x000000).with_alpha(0.45))
         .draw_rect(bar);

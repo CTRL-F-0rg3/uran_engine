@@ -19,13 +19,19 @@ pub struct Face {
 impl Face {
     /// Ściana z trzech punktów (czwarty domyka).
     pub fn tri(a: Vec3, b: Vec3, c: Vec3, color: [f32; 3]) -> Face {
-        Face { corners: [a, b, c, a], color }
+        Face {
+            corners: [a, b, c, a],
+            color,
+        }
     }
 
     /// Ściana definiowana wektorami przesunięcia z punktu bazowego.
     /// Kolejność `u` x `v` musi dawać normalną skierowaną na zewnątrz.
     pub fn quad(origin: Vec3, u: Vec3, v: Vec3, color: [f32; 3]) -> Face {
-        Face { corners: [origin, origin + u, origin + u + v, origin + v], color }
+        Face {
+            corners: [origin, origin + u, origin + u + v, origin + v],
+            color,
+        }
     }
 }
 
@@ -74,14 +80,32 @@ pub fn box_faces(center: Vec3, half: Vec3, color: [f32; 3]) -> Vec<Face> {
     ];
     vec![
         // tył (-Z) i przód (+Z)
-        Face { corners: [p[0], p[3], p[2], p[1]], color },
-        Face { corners: [p[4], p[5], p[6], p[7]], color },
+        Face {
+            corners: [p[0], p[3], p[2], p[1]],
+            color,
+        },
+        Face {
+            corners: [p[4], p[5], p[6], p[7]],
+            color,
+        },
         // lewo (-X) i prawo (+X)
-        Face { corners: [p[0], p[1], p[5], p[4]], color },
-        Face { corners: [p[3], p[7], p[6], p[2]], color },
+        Face {
+            corners: [p[0], p[1], p[5], p[4]],
+            color,
+        },
+        Face {
+            corners: [p[3], p[7], p[6], p[2]],
+            color,
+        },
         // dół (-Y) i góra (+Y)
-        Face { corners: [p[0], p[4], p[7], p[3]], color },
-        Face { corners: [p[1], p[2], p[6], p[5]], color },
+        Face {
+            corners: [p[0], p[4], p[7], p[3]],
+            color,
+        },
+        Face {
+            corners: [p[1], p[2], p[6], p[5]],
+            color,
+        },
     ]
 }
 
@@ -147,30 +171,66 @@ pub fn tank_hull(color: [f32; 3]) -> Mesh {
     // `(c1 - c0) × (c2 - c0)`, więc odwrócenie wierzchołków 2 i 3
     // odwraca ścianę i cała bryła znika przy back-face culling.
     let faces = vec![
-        Face { corners: [ // tył (-Z)
-            Vec3::new(-w, y_bot, -z), Vec3::new(-w, y_top, -z),
-            Vec3::new(w, y_top, -z), Vec3::new(w, y_bot, -z),
-        ], color },
-        Face { corners: [ // lewo (-X)
-            Vec3::new(-w, y_bot, -z), Vec3::new(-w, y_bot, z),
-            Vec3::new(-w, y_top, z), Vec3::new(-w, y_top, -z),
-        ], color },
-        Face { corners: [ // prawo (+X)
-            Vec3::new(w, y_bot, -z), Vec3::new(w, y_top, -z),
-            Vec3::new(w, y_top, z), Vec3::new(w, y_bot, z),
-        ], color },
-        Face { corners: [ // dół (-Y)
-            Vec3::new(-w, y_bot, -z), Vec3::new(w, y_bot, -z),
-            Vec3::new(w, y_bot, z), Vec3::new(-w, y_bot, z),
-        ], color },
-        Face { corners: [ // góra (+Y)
-            Vec3::new(-w, y_top, -z), Vec3::new(-w, y_top, z),
-            Vec3::new(w, y_top, z), Vec3::new(w, y_top, -z),
-        ], color },
-        Face { corners: [ // przód (+Z), pochylony do tyłu u góry
-            Vec3::new(-w, y_bot, z), Vec3::new(w, y_bot, z),
-            Vec3::new(w * 0.88, y_top, z - 0.5), Vec3::new(-w * 0.88, y_top, z - 0.5),
-        ], color },
+        Face {
+            corners: [
+                // tył (-Z)
+                Vec3::new(-w, y_bot, -z),
+                Vec3::new(-w, y_top, -z),
+                Vec3::new(w, y_top, -z),
+                Vec3::new(w, y_bot, -z),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                // lewo (-X)
+                Vec3::new(-w, y_bot, -z),
+                Vec3::new(-w, y_bot, z),
+                Vec3::new(-w, y_top, z),
+                Vec3::new(-w, y_top, -z),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                // prawo (+X)
+                Vec3::new(w, y_bot, -z),
+                Vec3::new(w, y_top, -z),
+                Vec3::new(w, y_top, z),
+                Vec3::new(w, y_bot, z),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                // dół (-Y)
+                Vec3::new(-w, y_bot, -z),
+                Vec3::new(w, y_bot, -z),
+                Vec3::new(w, y_bot, z),
+                Vec3::new(-w, y_bot, z),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                // góra (+Y)
+                Vec3::new(-w, y_top, -z),
+                Vec3::new(-w, y_top, z),
+                Vec3::new(w, y_top, z),
+                Vec3::new(w, y_top, -z),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                // przód (+Z), pochylony do tyłu u góry
+                Vec3::new(-w, y_bot, z),
+                Vec3::new(w, y_bot, z),
+                Vec3::new(w * 0.88, y_top, z - 0.5),
+                Vec3::new(-w * 0.88, y_top, z - 0.5),
+            ],
+            color,
+        },
     ];
     faces_to_mesh(&faces)
 }
@@ -209,18 +269,60 @@ pub fn tank_turret(color: [f32; 3]) -> Mesh {
     use tank_dim as d;
     let [hx, hy, hz] = d::TURRET_HALF;
     let faces = vec![
-        Face { corners: [Vec3::new(-hx, -hy, -hz), Vec3::new(-hx, hy, -hz), // tył (-Z)
-                         Vec3::new(hx, hy, -hz), Vec3::new(hx, -hy, -hz)], color },
-        Face { corners: [Vec3::new(-hx, -hy, -hz), Vec3::new(-hx, -hy, hz), // lewo (-X)
-                         Vec3::new(-hx, hy, hz), Vec3::new(-hx, hy, -hz)], color },
-        Face { corners: [Vec3::new(hx, -hy, -hz), Vec3::new(hx, hy, -hz), // prawo (+X)
-                         Vec3::new(hx, hy, hz), Vec3::new(hx, -hy, hz)], color },
-        Face { corners: [Vec3::new(-hx, -hy, -hz), Vec3::new(hx, -hy, -hz), // dół (-Y)
-                         Vec3::new(hx, -hy, hz), Vec3::new(-hx, -hy, hz)], color },
-        Face { corners: [Vec3::new(-hx, -hy, hz), Vec3::new(hx, -hy, hz), // przód, pochylony
-                         Vec3::new(hx * 0.85, hy, hz - 0.3), Vec3::new(-hx * 0.85, hy, hz - 0.3)], color },
-        Face { corners: [Vec3::new(-hx, hy, -hz), Vec3::new(-hx, hy, hz - 0.3), // grzbiet
-                         Vec3::new(hx, hy, hz - 0.3), Vec3::new(hx, hy, -hz)], color },
+        Face {
+            corners: [
+                Vec3::new(-hx, -hy, -hz),
+                Vec3::new(-hx, hy, -hz), // tył (-Z)
+                Vec3::new(hx, hy, -hz),
+                Vec3::new(hx, -hy, -hz),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                Vec3::new(-hx, -hy, -hz),
+                Vec3::new(-hx, -hy, hz), // lewo (-X)
+                Vec3::new(-hx, hy, hz),
+                Vec3::new(-hx, hy, -hz),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                Vec3::new(hx, -hy, -hz),
+                Vec3::new(hx, hy, -hz), // prawo (+X)
+                Vec3::new(hx, hy, hz),
+                Vec3::new(hx, -hy, hz),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                Vec3::new(-hx, -hy, -hz),
+                Vec3::new(hx, -hy, -hz), // dół (-Y)
+                Vec3::new(hx, -hy, hz),
+                Vec3::new(-hx, -hy, hz),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                Vec3::new(-hx, -hy, hz),
+                Vec3::new(hx, -hy, hz), // przód, pochylony
+                Vec3::new(hx * 0.85, hy, hz - 0.3),
+                Vec3::new(-hx * 0.85, hy, hz - 0.3),
+            ],
+            color,
+        },
+        Face {
+            corners: [
+                Vec3::new(-hx, hy, -hz),
+                Vec3::new(-hx, hy, hz - 0.3), // grzbiet
+                Vec3::new(hx, hy, hz - 0.3),
+                Vec3::new(hx, hy, -hz),
+            ],
+            color,
+        },
     ];
     faces_to_mesh(&faces)
 }
@@ -278,7 +380,11 @@ mod tests {
     fn gun_points_forward() {
         // lufa musi wystawać do przodu (+Z), inaczej czołg strzela w bok
         let gun = tank_gun();
-        let max_z = gun.vertices.iter().map(|v| v.pos().z).fold(f32::MIN, f32::max);
+        let max_z = gun
+            .vertices
+            .iter()
+            .map(|v| v.pos().z)
+            .fold(f32::MIN, f32::max);
         assert!(max_z > 1.0, "lufa nie wystaje: max z = {max_z}");
         assert!(tank_dim::GUN_Z > 0.0);
     }
@@ -287,7 +393,11 @@ mod tests {
     fn tracks_stick_out_from_hull() {
         // gąsiennice muszą być szersze niż kadłub
         let track = tank_track(1.0);
-        let max_x = track.vertices.iter().map(|v| v.pos().x).fold(f32::MIN, f32::max);
+        let max_x = track
+            .vertices
+            .iter()
+            .map(|v| v.pos().x)
+            .fold(f32::MIN, f32::max);
         assert!(
             max_x > tank_dim::HULL_HALF_X,
             "gąsiennica nie wystaje poza kadłub: {max_x} vs {}",
@@ -299,7 +409,11 @@ mod tests {
     fn left_and_right_tracks_mirror_each_other() {
         // Lustro = odbicie w osi X. Lewa gąsiennica ma X ujemne, więc po
         // odwróceniu sortowania i zmianie znaku musi pokryć się z prawą.
-        let mut lx: Vec<f32> = tank_track(-1.0).vertices.iter().map(|v| v.pos().x).collect();
+        let mut lx: Vec<f32> = tank_track(-1.0)
+            .vertices
+            .iter()
+            .map(|v| v.pos().x)
+            .collect();
         let mut rx: Vec<f32> = tank_track(1.0).vertices.iter().map(|v| v.pos().x).collect();
         lx.sort_by(|a, b| a.partial_cmp(b).unwrap());
         rx.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -328,7 +442,10 @@ mod tests {
         for (name, mesh) in [
             ("kadłub", tank_hull(palette::PLAYER)),
             ("wieża", tank_turret(palette::PLAYER)),
-            ("prostopadłościan", box_mesh(Vec3::ZERO, Vec3::splat(1.0), [1.0; 3])),
+            (
+                "prostopadłościan",
+                box_mesh(Vec3::ZERO, Vec3::splat(1.0), [1.0; 3]),
+            ),
         ] {
             let centre = mesh.center();
             for (i, v) in mesh.vertices.iter().enumerate() {

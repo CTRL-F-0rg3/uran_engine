@@ -356,7 +356,11 @@ mod tests {
         let f = UnitFlags::alive().with_team(Team::Friendly);
         let dead = f.with_alive(false);
         assert!(!dead.is_alive());
-        assert_eq!(dead.team(), Team::Friendly, "zmiana życia nie zgubiła drużyny");
+        assert_eq!(
+            dead.team(),
+            Team::Friendly,
+            "zmiana życia nie zgubiła drużyny"
+        );
     }
 
     #[test]
@@ -411,7 +415,11 @@ mod tests {
 
     #[test]
     fn stats_sum_both_teams() {
-        let s = SimStats { alive_friendly: 3, alive_enemy: 4, ..Default::default() };
+        let s = SimStats {
+            alive_friendly: 3,
+            alive_enemy: 4,
+            ..Default::default()
+        };
         assert_eq!(s.total_alive(), 7);
     }
 }

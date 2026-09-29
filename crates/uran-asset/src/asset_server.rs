@@ -89,7 +89,11 @@ impl AssetServer {
 
     /// Ścieżka bezwzględna względem katalogu assetów.
     pub fn resolve(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() { path.to_path_buf() } else { self.root.join(path) }
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        }
     }
 }
 
@@ -109,8 +113,14 @@ mod tests {
     #[test]
     fn resolve_is_relative_to_root() {
         let server = AssetServer::new("assets");
-        assert_eq!(server.resolve(Path::new("player.png")), PathBuf::from("assets/player.png"));
-        assert_eq!(server.resolve(Path::new("/abs/player.png")), PathBuf::from("/abs/player.png"));
+        assert_eq!(
+            server.resolve(Path::new("player.png")),
+            PathBuf::from("assets/player.png")
+        );
+        assert_eq!(
+            server.resolve(Path::new("/abs/player.png")),
+            PathBuf::from("/abs/player.png")
+        );
     }
 
     #[test]
@@ -123,7 +133,10 @@ mod tests {
         let mut server = AssetServer::new(&dir);
         let a = server.load_image("tile.png").unwrap();
         let b = server.load_image("tile.png").unwrap();
-        assert_eq!(a, b, "drugie wczytanie tego samego pliku zwraca ten sam uchwyt");
+        assert_eq!(
+            a, b,
+            "drugie wczytanie tego samego pliku zwraca ten sam uchwyt"
+        );
         assert!(server.load_image("nie_ma_mnie.png").is_err());
 
         let _ = std::fs::remove_file(&file);

@@ -3,10 +3,10 @@
 
 use bytemuck::{Pod, Zeroable};
 use uran_asset::{Handle, HandleId, Image};
-use uran_ecs::{BlendMode, Material, Mesh, Sprite, Transform, Visibility};
-use uran_math::{Color, Mat3, Vec2};
 use uran_ecs::UvRect;
 use uran_ecs::World;
+use uran_ecs::{BlendMode, Material, Mesh, Sprite, Transform, Visibility};
+use uran_math::{Color, Mat3, Vec2};
 
 /// Dane jednej instancji sprite'a przesyłane do GPU (64 bajty).
 ///
@@ -165,7 +165,11 @@ pub struct MeshGeometry {
 impl MeshGeometry {
     pub fn from_mesh(mesh: &Mesh) -> Self {
         let hash = hash_mesh(mesh);
-        Self { vertices: mesh.vertices.clone(), indices: mesh.indices.clone(), hash }
+        Self {
+            vertices: mesh.vertices.clone(),
+            indices: mesh.indices.clone(),
+            hash,
+        }
     }
 }
 
@@ -392,8 +396,9 @@ impl DrawList {
     /// Encja z obydwoma naraz zostanie narysowana dwukrotnie — używaj
     /// jednego z nich.
     pub fn extract_world(&mut self, world: &World, assets: &uran_asset::AssetServer) {
-        for (_entity, (transform, sprite, material, visibility)) in
-            world.query::<(&Transform, &Sprite, &Material, &Visibility)>().iter()
+        for (_entity, (transform, sprite, material, visibility)) in world
+            .query::<(&Transform, &Sprite, &Material, &Visibility)>()
+            .iter()
         {
             if !visibility.0 {
                 continue;
@@ -426,8 +431,9 @@ impl DrawList {
             });
         }
 
-        for (_entity, (transform, mesh, material, visibility)) in
-            world.query::<(&Transform, &Mesh, &Material, &Visibility)>().iter()
+        for (_entity, (transform, mesh, material, visibility)) in world
+            .query::<(&Transform, &Mesh, &Material, &Visibility)>()
+            .iter()
         {
             if !visibility.0 || mesh.is_empty() || !mesh.validate() {
                 continue;
@@ -457,12 +463,20 @@ impl DrawList {
         // `screen_space` jest pierwszym kluczem: HUD rysowany jest ZAWSZE
         // na wierzchu, niezależnie od warstwy, którą dostał w świecie.
         self.sprites.sort_by(|a, b| {
-            (a.screen_space, a.layer, a.blend, a.texture)
-                .cmp(&(b.screen_space, b.layer, b.blend, b.texture))
+            (a.screen_space, a.layer, a.blend, a.texture).cmp(&(
+                b.screen_space,
+                b.layer,
+                b.blend,
+                b.texture,
+            ))
         });
         self.meshes.sort_by(|a, b| {
-            (a.screen_space, a.layer, a.blend, a.texture)
-                .cmp(&(b.screen_space, b.layer, b.blend, b.texture))
+            (a.screen_space, a.layer, a.blend, a.texture).cmp(&(
+                b.screen_space,
+                b.layer,
+                b.blend,
+                b.texture,
+            ))
         });
     }
 }
@@ -493,7 +507,10 @@ mod tests {
             Color::WHITE,
         );
         // środek prostokąta (5, 10) trafia na macierz
-        assert_eq!((draw.transform * Vec2::ZERO.extend(1.0)).truncate(), Vec2::new(5.0, 10.0));
+        assert_eq!(
+            (draw.transform * Vec2::ZERO.extend(1.0)).truncate(),
+            Vec2::new(5.0, 10.0)
+        );
         // macierz przekształca współrzędne JEDNOSTKOWEGO prostokąta
         // (-0.5..0.5), więc róg (0.5, 0.5) ma trafić w (10, 20)
         let corner = (draw.transform * Vec2::new(0.5, 0.5).extend(1.0)).truncate();
@@ -513,9 +530,11 @@ mod tests {
 
     #[test]
     fn instance_converts_color_to_linear() {
-        let instance =
-            SpriteInstance::new(Mat3::IDENTITY, UvRect::FULL, Color::from_hex(0x808080));
-        assert!(instance.color[0] < 0.5, "kolor powinien być konwertowany do liniowego");
+        let instance = SpriteInstance::new(Mat3::IDENTITY, UvRect::FULL, Color::from_hex(0x808080));
+        assert!(
+            instance.color[0] < 0.5,
+            "kolor powinien być konwertowany do liniowego"
+        );
         assert!((instance.color[0] - 0.2158).abs() < 0.01);
     }
 
@@ -527,7 +546,10 @@ mod tests {
             MeshPushConstants::new(Mat3::from_translation(Vec2::new(1.0, 2.0)), Color::WHITE);
         assert_eq!(push.model[2][0], 1.0);
         assert_eq!(push.model[2][1], 2.0);
-        assert_eq!(push.model[0][3], 0.0, "kolumny mat3 w GLSL są wyrównane do 16 bajtów");
+        assert_eq!(
+            push.model[0][3], 0.0,
+            "kolumny mat3 w GLSL są wyrównane do 16 bajtów"
+        );
         assert_eq!(push.tint, [1.0, 1.0, 1.0, 1.0]);
     }
 
@@ -538,17 +560,32 @@ mod tests {
         // `w` = 2 dla wierzchołków o z = 0 i dzielenie perspektywiczne
         // w NDC zmniejszy CAŁĄ scenę do połowy.
         // kamera: przesunięcie środka okna do (0,0), potem skala
-        let g = Globals::new(Mat3::from_scale(Vec2::new(0.01, 0.01))
-            * Mat3::from_translation(Vec2::new(-400.0, -300.0)));
+        let g = Globals::new(
+            Mat3::from_scale(Vec2::new(0.01, 0.01))
+                * Mat3::from_translation(Vec2::new(-400.0, -300.0)),
+        );
         // wiersz w
-        let w_row = [g.view_proj[0][3], g.view_proj[1][3], g.view_proj[2][3], g.view_proj[3][3]];
+        let w_row = [
+            g.view_proj[0][3],
+            g.view_proj[1][3],
+            g.view_proj[2][3],
+            g.view_proj[3][3],
+        ];
         assert_eq!(w_row, [0.0, 0.0, 0.0, 1.0], "wiersz w musi być (0,0,0,1)");
         // 200 px na prawo od środka okna -> ndc.x = 2 (poza ekranem)
         let p = g.transform_point(Vec2::new(600.0, 300.0));
-        assert!((p.x - 2.0).abs() < 1e-5, "ndc.x = {:?}, oczekiwano 2.0", p.x);
+        assert!(
+            (p.x - 2.0).abs() < 1e-5,
+            "ndc.x = {:?}, oczekiwano 2.0",
+            p.x
+        );
         // a 100 px od środku mieści się w kadrze
         let q = g.transform_point(Vec2::new(500.0, 300.0));
-        assert!((q.x - 1.0).abs() < 1e-5, "ndc.x = {:?}, oczekiwano 1.0", q.x);
+        assert!(
+            (q.x - 1.0).abs() < 1e-5,
+            "ndc.x = {:?}, oczekiwano 1.0",
+            q.x
+        );
     }
 
     #[test]
@@ -565,7 +602,10 @@ mod tests {
         // Regresja: translacja w macierzy 2x3 siedzi w ostatniej KOLUMNIE,
         // więc po homogenizacji musi trafić do ostatniej kolumny 4x4.
         let g = Globals::new(Mat3::from_translation(Vec2::new(100.0, -50.0)));
-        assert_eq!(g.transform_point(Vec2::new(10.0, 10.0)), Vec2::new(110.0, -40.0));
+        assert_eq!(
+            g.transform_point(Vec2::new(10.0, 10.0)),
+            Vec2::new(110.0, -40.0)
+        );
         assert_eq!(g.transform_point(Vec2::ZERO), Vec2::new(100.0, -50.0));
     }
 
@@ -576,7 +616,12 @@ mod tests {
             * Mat3::from_translation(-Vec2::new(400.0, 300.0));
         let g = Globals::new(view_proj);
         // środek okna (400, 300) w pikselach -> (0, 0) w NDC
-        assert!(g.transform_point(Vec2::new(400.0, 300.0)).abs().max_element() < 1e-4);
+        assert!(
+            g.transform_point(Vec2::new(400.0, 300.0))
+                .abs()
+                .max_element()
+                < 1e-4
+        );
         // 100 px w prawo od środka -> 1.0 w NDC
         let right = g.transform_point(Vec2::new(500.0, 300.0));
         assert!((right.x - 1.0).abs() < 1e-4, "było {right:?}");
@@ -616,7 +661,11 @@ mod tests {
             .iter()
             .map(|s| s.transform.to_cols_array_2d()[2][0])
             .collect();
-        assert_eq!(xs, vec![0.0, 1.0, 2.0, 3.0, 4.0], "kolejność dodania musi zostać");
+        assert_eq!(
+            xs,
+            vec![0.0, 1.0, 2.0, 3.0, 4.0],
+            "kolejność dodania musi zostać"
+        );
     }
 
     #[test]

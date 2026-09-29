@@ -115,7 +115,12 @@ impl Color {
                 ((v + 0.055) / 1.055).powf(2.4)
             }
         }
-        Self { r: c(self.r), g: c(self.g), b: c(self.b), a: self.a }
+        Self {
+            r: c(self.r),
+            g: c(self.g),
+            b: c(self.b),
+            a: self.a,
+        }
     }
 
     /// Liniowe światło -> sRGB.
@@ -127,7 +132,12 @@ impl Color {
                 1.055 * v.powf(1.0 / 2.4) - 0.055
             }
         }
-        Self { r: c(self.r), g: c(self.g), b: c(self.b), a: self.a }
+        Self {
+            r: c(self.r),
+            g: c(self.g),
+            b: c(self.b),
+            a: self.a,
+        }
     }
 
     /// Czarno-biała wersja koloru (przydatne do tintowania sprite'ów).
@@ -153,7 +163,10 @@ mod tests {
         assert_eq!(Color::from_hex(0x00FF00), Color::rgb(0.0, 1.0, 0.0));
         assert_eq!(Color::from_hex(0x0000FF), Color::rgb(0.0, 0.0, 1.0));
         assert_eq!(Color::from_hex(0xFFFFFF).a, 1.0);
-        assert_eq!(Color::from_hex(0x123456).to_rgba8(), [0x12, 0x34, 0x56, 0xFF]);
+        assert_eq!(
+            Color::from_hex(0x123456).to_rgba8(),
+            [0x12, 0x34, 0x56, 0xFF]
+        );
     }
 
     #[test]
@@ -165,7 +178,12 @@ mod tests {
 
     #[test]
     fn linear_conversion_roundtrip() {
-        for c in [Color::WHITE, Color::BLACK, Color::RED, Color::from_hex(0x3366CC)] {
+        for c in [
+            Color::WHITE,
+            Color::BLACK,
+            Color::RED,
+            Color::from_hex(0x3366CC),
+        ] {
             let back = c.to_linear().from_linear();
             assert!((back.r - c.r).abs() < 1e-5);
             assert!((back.g - c.g).abs() < 1e-5);

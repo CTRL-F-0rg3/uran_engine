@@ -2,10 +2,10 @@
 
 use uran_asset::{AssetServer, FontData, Handle, Image};
 use uran_core::{Input, Time};
-use winit::event::MouseButton;
 use uran_ecs::World;
 use uran_math::Vec2;
 use uran_render::{Camera2d, Graphics};
+use winit::event::MouseButton;
 
 /// Katalog domyślny dla assetów gry.
 pub const DEFAULT_ASSET_DIR: &str = "assets";

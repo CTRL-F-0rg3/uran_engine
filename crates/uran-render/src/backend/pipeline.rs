@@ -80,7 +80,11 @@ pub fn blend_state(mode: BlendMode) -> Option<wgpu::BlendState> {
         BlendMode::Replace => return None,
     };
     Some(wgpu::BlendState {
-        color: BlendComponent { src_factor: src, dst_factor: dst, operation: BlendOperation::Add },
+        color: BlendComponent {
+            src_factor: src,
+            dst_factor: dst,
+            operation: BlendOperation::Add,
+        },
         alpha: BlendComponent {
             src_factor: BlendFactor::One,
             dst_factor: BlendFactor::OneMinusSrcAlpha,
@@ -141,30 +145,43 @@ impl PipelineCache {
             BlendMode::Premultiplied,
             BlendMode::Replace,
         ] {
-            cache
-                .sprite
-                .insert(mode, create_sprite_pipeline(device, &layout, shader, format, samples, mode));
-            cache
-                .mesh
-                .insert(mode, create_mesh_pipeline(device, &mesh_layout, shader, format, samples, mode));
+            cache.sprite.insert(
+                mode,
+                create_sprite_pipeline(device, &layout, shader, format, samples, mode),
+            );
+            cache.mesh.insert(
+                mode,
+                create_mesh_pipeline(device, &mesh_layout, shader, format, samples, mode),
+            );
         }
         cache
     }
 
     pub fn sprite(&self, mode: BlendMode) -> &wgpu::RenderPipeline {
-        self.sprite.get(&mode).expect("brak potoku sprite dla trybu mieszania")
+        self.sprite
+            .get(&mode)
+            .expect("brak potoku sprite dla trybu mieszania")
     }
 
     pub fn mesh(&self, mode: BlendMode) -> &wgpu::RenderPipeline {
-        self.mesh.get(&mode).expect("brak potoku mesh dla trybu mieszania")
+        self.mesh
+            .get(&mode)
+            .expect("brak potoku mesh dla trybu mieszania")
     }
 
     /// Bind grupa globalna z macierzą projekcji.
-    pub fn globals_bind_group(&self, device: &wgpu::Device, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+    pub fn globals_bind_group(
+        &self,
+        device: &wgpu::Device,
+        buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Uran Globals BG"),
             layout: &self.globals_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
         })
     }
 }
@@ -220,7 +237,10 @@ fn create_sprite_pipeline(
             ..Default::default()
         },
         depth_stencil: None,
-        multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
         multiview: None,
     })
 }
@@ -265,11 +285,13 @@ fn create_mesh_pipeline(
             ..Default::default()
         },
         depth_stencil: None,
-        multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
         multiview: None,
     })
 }
-
 
 /// Jednostkowy kwadrat w zakresie -0.5..0.5 (anchor w środku).
 ///

@@ -468,6 +468,10 @@ mod tests {
         for e in &w.enemies {
             assert!(e.pos.x.abs() < ARENA_HALF + 1.0 && e.pos.z.abs() < ARENA_HALF + 1.0);
         }
-        assert!(w.sparks.len() < 500, "iskry się nie sprzątają: {}", w.sparks.len());
+        assert!(
+            w.sparks.len() < 500,
+            "iskry się nie sprzątają: {}",
+            w.sparks.len()
+        );
     }
 }

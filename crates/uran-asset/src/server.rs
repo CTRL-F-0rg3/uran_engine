@@ -27,7 +27,11 @@ impl<T> Default for Assets<T> {
 
 impl<T> Assets<T> {
     pub fn new() -> Self {
-        Self { slots: Vec::new(), free: Vec::new(), _marker: PhantomData }
+        Self {
+            slots: Vec::new(),
+            free: Vec::new(),
+            _marker: PhantomData,
+        }
     }
 
     /// Dodaje asset i zwraca uchwyt.
@@ -38,7 +42,10 @@ impl<T> Assets<T> {
             return Handle::new(index, slot.generation);
         }
         let index = self.slots.len() as u32;
-        self.slots.push(Slot { generation: 0, value: Some(value) });
+        self.slots.push(Slot {
+            generation: 0,
+            value: Some(value),
+        });
         Handle::new(index, 0)
     }
 

@@ -7,10 +7,10 @@ use uran_math::Vec2;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
-/// Klasa klawiszy (alias, żeby nie trzeba było importować `winit` w grze).
-pub use winit::keyboard::KeyCode as Key;
 /// Przycisk myszy.
 pub use winit::event::MouseButton as Mouse;
+/// Klasa klawiszy (alias, żeby nie trzeba było importować `winit` w grze).
+pub use winit::keyboard::KeyCode as Key;
 /// Zbiorczy stan modyfikatorów (Shift/Ctrl/Alt/Super).
 pub use winit::keyboard::ModifiersState as Modifiers;
 
@@ -117,7 +117,6 @@ impl Input {
         self.buttons_released.clear();
         self.scroll_delta = Vec2::ZERO;
     }
-
 
     // --- Klawiatura ---
 
@@ -276,7 +275,10 @@ mod tests {
     fn mouse_delta_is_clamped() {
         let mut input = Input::new();
         input.set_mouse_position(10_000.0, 0.0);
-        assert!(input.mouse_delta().x <= MAX_MOUSE_DELTA, "skok po refocus musi być ograniczony");
+        assert!(
+            input.mouse_delta().x <= MAX_MOUSE_DELTA,
+            "skok po refocus musi być ograniczony"
+        );
     }
 
     #[test]
@@ -302,5 +304,3 @@ mod tests {
         assert!(!input.primary_just_pressed());
     }
 }
-
-

@@ -64,26 +64,55 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(in.world_normal);
     let l = normalize(scene.light_dir.xyz);
     let v = normalize(scene.eye.xyz - in.world_pos);
-    // Lambert: ujemny diff oznacza ścianę odwróconą od światła
     let ndotl = max(dot(n, l), 0.0);
-    let diffuse = scene.light_color.rgb * ndotl;
+
+    // --- światło
+    // Barwy są podawane w sRGB (tak, jak je czyta oko), a mnożenie
+    // i odbicie wykonujemy w LINIOWYM. Bez tej konwersji kolor (0.34, 0.38,
+    // 0.24) potraktowany jak liniowy wypada po gamma-encodingu blado i
+    // wypłukany — właśnie dlatego teren wyglądał jak trawa w rozcieńczalniku.
+    let albedo = srgb_to_linear(in.color);
+    let sun = srgb_to_linear(scene.light_color.rgb);
+
+    let diffuse = sun * ndotl;
 
     // Blinn-Phong zamiast Phonga: połówka wektora jest tańsza i daje
-    // ostrzejski, mniej rozmyty refleks
+    // ostrzejszy, mniej rozmyty refleks
     let h = normalize(l + v);
-    let ndoth = max(dot(n, h), 0.0);
-    // wykładnik 48 daje wąski, metaliczny połysk
-    let spec = pow(ndoth, 48.0) * 0.35;
+    let spec = pow(max(dot(n, h), 0.0), 64.0) * 0.25;
 
-    // ambient podnosi czarne ściany do poziomu otoczenia, inaczej bryły
-    // wyglądają jak wycięte z papieru
-    var lit = in.color * (scene.ambient_time.rgb + diffuse);
+    // --- ambient typu hemisfera: niebo z góry, ciemne odbicie ziemi z dołu.
+    // Płaskie ambient wygląda, jakby wszystkie ściany dostały to samo
+    // światło; hemisfera daje wrażenie otoczenia.
+    let sky = srgb_to_linear(scene.ambient_time.rgb);
+    let hemi = mix(sky * 0.55, sky * 1.35, n.y * 0.5 + 0.5);
 
-    // mgła: dalekie obiekty zlewają się z tłem, co daje poczucie skali
+    // --- ekspozycja
+    // Oświetlenie liczymy w liniowym, gdzie 1.0 to „biały" i wartości
+    // rzadko tam docierają. Bez mnożnika kadr wychodzi ciemny mimo
+    // poprawnych kolorów. 1.35 to empirycznie: trawa wygląda jak trawa,
+    // a jasne ściany czołgów nie przechodzą w biel.
+    let exposure = 1.35;
+    var lit = albedo * (hemi + diffuse) * exposure + vec3<f32>(spec);
+
+    // --- światło wsteczne: rozjaśnia krawędzie brył skierowanych do
+    // kamery, dzięki czemu kształt pozostaje czytelny mimo cienia
+    let rim = pow(1.0 - max(dot(n, v), 0.0), 3.5) * 0.10;
+    lit = lit + albedo * rim * exposure;
+
+    // --- mgła: dalekie obiekty zlewają się z niebem, co daje skalę
     let dist = length(scene.eye.xyz - in.world_pos);
-    let fog = 1.0 - clamp((dist - 60.0) / 260.0, 0.0, 0.75);
-    let sky = vec3<f32>(0.45, 0.55, 0.68);
-    lit = mix(sky * 0.5, lit, fog);
+    let fog = clamp((dist - 45.0) / 200.0, 0.0, 0.85);
+    // kolmgły bierzemy z gradientu nieba (taki sam, co rysuje `clear`)
+    let fog_col = vec3<f32>(0.36, 0.50, 0.70);
+    lit = mix(lit, fog_col, fog);
 
-    return vec4<f32>(lit + spec, 1.0);
+    return vec4<f32>(lit, 1.0);
+}
+
+/// sRGB -> liniowy, zgodną z krówką aproksymacji.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
 }

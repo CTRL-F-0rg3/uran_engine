@@ -61,8 +61,8 @@ impl Default for UnitStyle {
             alpha: 1.0,
             _pad: 0.0,
             colors: [
-                [0.30, 0.62, 1.0, 1.0],  // gracz — niebieski
-                [1.0, 0.36, 0.32, 1.0],  // przeciwnik — czerwony
+                [0.30, 0.62, 1.0, 1.0], // gracz — niebieski
+                [1.0, 0.36, 0.32, 1.0], // przeciwnik — czerwony
                 [0.0; 4],
                 [0.0; 4],
             ],
@@ -227,26 +227,38 @@ impl GpuSim {
                         min_binding_size: None,
                     },
                 ),
-                binding(1, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                }),
-                binding(2, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                }),
-                binding(3, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                }),
-                binding(4, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                }),
+                binding(
+                    1,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                binding(
+                    2,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                binding(
+                    3,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                binding(
+                    4,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
             ],
         });
 
@@ -432,9 +444,7 @@ impl GpuSim {
         self.frame += 1;
         // Kopię nagrywamy tylko wtedy, gdy poprzedni odczyt się zakończył —
         // inaczej nadpisalibyśmy bufor w trakcie, gdy jest zmapowany.
-        if self.frame % STATS_INTERVAL == 0
-            && matches!(self.readback, StatsReadback::Idle)
-        {
+        if self.frame % STATS_INTERVAL == 0 && matches!(self.readback, StatsReadback::Idle) {
             // WAŻNE: `map_async` WOLNO zawołać dopiero PO `queue.submit`.
             // Gdybyśmy zmapowali bufor tu, walidacja wgpu odrzuci submit,
             // bo `readback_buffer` byłby w tym momencie zmapowany, a dopiero
@@ -615,7 +625,10 @@ fn build_draw_pipeline(
             ..Default::default()
         },
         depth_stencil: None,
-        multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
         multiview: None,
     });
 
@@ -635,7 +648,11 @@ fn build_draw_pipeline(
             resource: style.as_entire_binding(),
         }],
     });
-    DrawPipeline { pipeline, bind_group, style_bind_group }
+    DrawPipeline {
+        pipeline,
+        bind_group,
+        style_bind_group,
+    }
 }
 
 /// Wstawia stałą `MAX_PER_CELL` do WGSL i zwraca źródło shadera symulacji.

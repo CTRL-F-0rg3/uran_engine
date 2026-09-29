@@ -24,11 +24,18 @@ impl Default for Camera2d {
 
 impl Camera2d {
     pub const fn new() -> Self {
-        Self { position: Vec2::ZERO, zoom: 1.0, rotation: 0.0 }
+        Self {
+            position: Vec2::ZERO,
+            zoom: 1.0,
+            rotation: 0.0,
+        }
     }
 
     pub fn at(x: f32, y: f32) -> Self {
-        Self { position: Vec2::new(x, y), ..Self::new() }
+        Self {
+            position: Vec2::new(x, y),
+            ..Self::new()
+        }
     }
 
     pub fn with_position(mut self, position: Vec2) -> Self {
@@ -56,7 +63,9 @@ impl Camera2d {
         self.position = world.center();
         let size = world.size();
         // skalujemy tą osią, która jest ciasniejsza
-        self.zoom = (window_size.x / size.x).min(window_size.y / size.y).max(f32::EPSILON);
+        self.zoom = (window_size.x / size.x)
+            .min(window_size.y / size.y)
+            .max(f32::EPSILON);
     }
 
     /// Rozmiar widocznego obszaru w jednostkach świata.
@@ -144,10 +153,16 @@ mod screen_matrix_tests {
         let m = screen_matrix(size);
         // lewy górny róg -> (-1, 1)
         let tl = project(&m, Vec2::ZERO);
-        assert!((tl.x + 1.0).abs() < 1e-5 && (tl.y - 1.0).abs() < 1e-5, "{tl:?}");
+        assert!(
+            (tl.x + 1.0).abs() < 1e-5 && (tl.y - 1.0).abs() < 1e-5,
+            "{tl:?}"
+        );
         // prawy dolny -> (1, -1)
         let br = project(&m, size);
-        assert!((br.x - 1.0).abs() < 1e-5 && (br.y + 1.0).abs() < 1e-5, "{br:?}");
+        assert!(
+            (br.x - 1.0).abs() < 1e-5 && (br.y + 1.0).abs() < 1e-5,
+            "{br:?}"
+        );
     }
 
     #[test]
@@ -155,10 +170,16 @@ mod screen_matrix_tests {
         let size = Vec2::new(800.0, 600.0);
         let m = screen_matrix(size);
         let c = project(&m, size * 0.5);
-        assert!(c.abs().max_element() < 1e-5, "środek to NDC (0,0), było {c:?}");
+        assert!(
+            c.abs().max_element() < 1e-5,
+            "środek to NDC (0,0), było {c:?}"
+        );
         // 100 px niżej -> mniejsze NDC.y (oś Y w dół)
         let below = project(&m, Vec2::new(400.0, 400.0));
-        assert!(below.y < 0.0, "y=400 powinno być poniżej środka, było {below:?}");
+        assert!(
+            below.y < 0.0,
+            "y=400 powinno być poniżej środka, było {below:?}"
+        );
     }
 
     #[test]
@@ -183,7 +204,10 @@ mod tests {
     fn center_of_window_maps_to_origin() {
         let camera = Camera2d::new();
         let world = camera.screen_to_world(Vec2::new(400.0, 300.0), WINDOW);
-        assert!(world.abs().max_element() < 1e-4, "środek okna to (0,0), było {world:?}");
+        assert!(
+            world.abs().max_element() < 1e-4,
+            "środek okna to (0,0), było {world:?}"
+        );
     }
 
     #[test]
@@ -247,11 +271,17 @@ mod tests {
     fn fit_world_sets_zoom() {
         let mut camera = Camera2d::new();
         // okno 800x600, scena 400x300 -> zoom 2 (widzimy połowę sceny)
-        camera.fit_world(Rect::from_xywh(0.0, 0.0, 400.0, 300.0), Vec2::new(800.0, 600.0));
+        camera.fit_world(
+            Rect::from_xywh(0.0, 0.0, 400.0, 300.0),
+            Vec2::new(800.0, 600.0),
+        );
         assert_eq!(camera.position, Vec2::new(200.0, 150.0));
         assert!((camera.zoom - 2.0).abs() < 1e-4, "zoom = {}", camera.zoom);
         // i faktycznie cała scena mieści się w widoku
-        assert_eq!(camera.visible_size(Vec2::new(800.0, 600.0)), Vec2::new(400.0, 300.0));
+        assert_eq!(
+            camera.visible_size(Vec2::new(800.0, 600.0)),
+            Vec2::new(400.0, 300.0)
+        );
     }
 
     #[test]
@@ -260,6 +290,9 @@ mod tests {
         for _ in 0..1000 {
             camera.smooth_follow(Vec2::new(100.0, 0.0), 1.0 / 60.0, 5.0);
         }
-        assert!((camera.position.x - 100.0).abs() < 0.01, "kamera nie dogoniła celu");
+        assert!(
+            (camera.position.x - 100.0).abs() < 0.01,
+            "kamera nie dogoniła celu"
+        );
     }
 }

@@ -10,6 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::camera::Camera3d;
 use crate::mesh::{GpuMesh, InstanceModel, Mesh, SceneUniform};
+use crate::postfx::PostFx;
 
 /// Identyfikator siatki w rejestrze renderera.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,7 +28,11 @@ pub struct DrawCmd {
 
 impl DrawCmd {
     pub fn new(mesh: MeshId, model: Mat4) -> Self {
-        Self { mesh, model, tint: [1.0; 4] }
+        Self {
+            mesh,
+            model,
+            tint: [1.0; 4],
+        }
     }
 
     pub fn tinted(mesh: MeshId, model: Mat4, tint: [f32; 4]) -> Self {
@@ -47,10 +52,15 @@ pub struct Lighting {
 impl Default for Lighting {
     fn default() -> Self {
         Self {
-            // słońce lekko z boku i z góry — inaczej bryły są płaskie
-            light_dir: Vec3::new(0.45, 0.82, 0.35),
-            light_color: [1.0, 0.97, 0.90],
-            ambient: [0.30, 0.34, 0.42],
+            // Słońce około 50° nad horyzontem i wyraźnie z boku. Niski kąt
+            // daje długie, czytelne cienie i jasno pokazuje, w którą stronę
+            // pada światło — przy słońcu prosto w głowę bryły są płaskie.
+            light_dir: Vec3::new(0.40, 0.62, 0.68),
+            // Ciepłe, lekko złotawe — słońce niskiego popołudnia.
+            light_color: [1.0, 0.93, 0.80],
+            // Ambient NIESIE NIEBO: chłodny, wyraźnie niebieski. Podnosi
+            // cienie do poziomu otoczenia, zamiast zostawiać je czarne.
+            ambient: [0.30, 0.40, 0.58],
         }
     }
 }
@@ -79,6 +89,9 @@ pub struct Renderer3d {
     /// bind grupę po zmianie bufora modeli, a layout musi zostać ten sam.
     models_bind_layout: wgpu::BindGroupLayout,
 
+    /// Post-processing (AA, bloom, tonemapping) — własny moduł.
+    postfx: PostFx,
+
     pipeline: wgpu::RenderPipeline,
     meshes: Vec<GpuMesh>,
 
@@ -93,11 +106,7 @@ pub struct Renderer3d {
 
 impl Renderer3d {
     /// Tworzy renderer 3D na tym samym urządzeniu, co renderer 2D.
-    pub fn new(
-        gpu: &uran_render::GpuContext,
-        format: wgpu::TextureFormat,
-        samples: u32,
-    ) -> Self {
+    pub fn new(gpu: &uran_render::GpuContext, format: wgpu::TextureFormat, samples: u32) -> Self {
         let device = &gpu.device;
 
         let scene_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -185,7 +194,10 @@ impl Renderer3d {
                 module: &shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
+                    // Scena rysuje do celu HDR (Rgba16Float), a NIE na
+                    // powierzchnię. Format musi się zgadzać z załącznikiem
+                    // render passu, inaczej walidacja wgpu to odrzuci.
+                    format: wgpu::TextureFormat::Rgba16Float,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -223,6 +235,7 @@ impl Renderer3d {
             models_capacity,
             bind_group,
             models_bind_layout: layout,
+            postfx: PostFx::new(device, format, samples),
             pipeline,
             meshes: Vec::new(),
             camera: Camera3d::default(),
@@ -286,16 +299,15 @@ impl Renderer3d {
     ///
     /// Bufor głębokości musi mieć `sample_count` zgodny z potokiem —
     /// inaczej walidacja wgpu odrzuci pass z attachementem.
-    fn with_depth(
-        self,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> Self {
+    fn with_depth(self, device: &wgpu::Device, width: u32, height: u32) -> Self {
         let (w, h) = (width.max(1), height.max(1));
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Uran 3D Depth"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: self.samples,
             dimension: wgpu::TextureDimension::D2,
@@ -342,7 +354,11 @@ impl Renderer3d {
             self.depth_size = (w, h);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Uran 3D Depth"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: self.samples,
                 dimension: wgpu::TextureDimension::D2,
@@ -397,16 +413,23 @@ impl Renderer3d {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Uran 3D"),
         });
+        // post-processing: cel HDR i tekstury zależne od rozmiaru okna
+        self.postfx.ensure_size(device, w, h);
+        self.postfx.upload_params(queue, w, h, self.time);
 
         {
             // klonujemy widok głębokości, żeby pożyczka `&mut pass` nie
             // kolidowała z pożyczką `&mut self` w pętli rysowania
-            let depth_view = self.depth.as_ref().expect("depth utworzony wyżej").clone();
+            // pożyczka widoku głębokości trwa tylko do końca passu
+            let depth_view = self.depth.as_ref().expect("depth utworzony wyżej");
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Uran 3D Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target.color,
-                    resolve_target: target.resolve,
+                    // Rysujemy do celu HDR, NIE na powierzchnię. Na ekran
+                    // wrzuca nas dopiero `postfx.composite` (tonemapping,
+                    // bloom, AA) — bez tego poświaty obciąłoby 8 bitów.
+                    view: self.postfx.hdr_view(),
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         // 3D czyści sam: 2D dostanie potem LoadOp::Load
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -419,7 +442,7 @@ impl Renderer3d {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
+                    view: depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -447,6 +470,9 @@ impl Renderer3d {
             self.last_draw_count = drawn;
         }
 
+        // post-processing na powierzchnię: bloom (3 passy) + kompozycja
+        self.postfx.composite(&mut encoder, target);
+
         queue.submit(Some(encoder.finish()));
     }
 }
@@ -472,8 +498,14 @@ fn make_bind_group(
         label: Some("Uran 3D Bind Group"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: scene.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: models.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: models.as_entire_binding(),
+            },
         ],
     })
 }
@@ -485,8 +517,10 @@ impl Scene3d for Renderer3d {
 
     fn resize(&mut self, width: u32, height: u32) {
         self.camera.set_aspect(width as f32 / height.max(1) as f32);
-        // wymuszamy odtworzenie depth bufferu przy następnym `draw`
-        self.depth = None;
+        // zerujemy `depth_size` i `sized`, żeby `with_depth` oraz
+        // `postfx.ensure_size` odtworzyły tekstury w nowym rozmiarze
+        self.depth_size = (0, 0);
+        self.postfx.invalidate();
     }
 
     fn is_active(&self) -> bool {

@@ -42,7 +42,11 @@ impl Image {
     /// punkt wyjścia dla grafik proceduralnych).
     pub fn new(width: u32, height: u32) -> Self {
         let len = (width as usize) * (height as usize) * 4;
-        Self { width, height, data: vec![0; len] }
+        Self {
+            width,
+            height,
+            data: vec![0; len],
+        }
     }
 
     /// Buduje obraz z surowych danych RGBA8.
@@ -54,7 +58,11 @@ impl Image {
                 data.len()
             )));
         }
-        Ok(Self { width, height, data })
+        Ok(Self {
+            width,
+            height,
+            data,
+        })
     }
 
     /// Pusty obraz wypełniony jednym kolorem.
@@ -85,7 +93,11 @@ impl Image {
     fn from_dynamic(img: image::DynamicImage) -> Result<Self, AssetError> {
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
-        Ok(Self { width, height, data: rgba.into_raw() })
+        Ok(Self {
+            width,
+            height,
+            data: rgba.into_raw(),
+        })
     }
 
     pub const fn size(&self) -> (u32, u32) {
@@ -102,7 +114,12 @@ impl Image {
             return [0, 0, 0, 0];
         }
         let i = ((y * self.width + x) * 4) as usize;
-        [self.data[i], self.data[i + 1], self.data[i + 2], self.data[i + 3]]
+        [
+            self.data[i],
+            self.data[i + 1],
+            self.data[i + 2],
+            self.data[i + 3],
+        ]
     }
 
     pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
@@ -187,7 +204,9 @@ impl FontData {
 
     /// Wczytuje czcionkę z dysku.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AssetError> {
-        Ok(Self { data: std::fs::read(path.as_ref())? })
+        Ok(Self {
+            data: std::fs::read(path.as_ref())?,
+        })
     }
 }
 

@@ -34,7 +34,11 @@ impl Default for WindowDescriptor {
 /// Punkt wejścia do konfiguracji okna.
 /// Przykład użycia: `windowed(800, 600).title("Gra").resizable(true).background(0x000000)`
 pub fn windowed(width: u32, height: u32) -> WindowDescriptor {
-    WindowDescriptor { width, height, ..Default::default() }
+    WindowDescriptor {
+        width,
+        height,
+        ..Default::default()
+    }
 }
 
 impl WindowDescriptor {

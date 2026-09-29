@@ -91,7 +91,12 @@ impl InfantryConfig {
     pub fn with_capacity(&self, capacity: usize) -> Self {
         let reserve = capacity * RESERVE_PERCENT / 100;
         let per_team = (capacity - reserve) / 2;
-        Self { capacity, friendly: per_team, enemy: per_team, ..*self }
+        Self {
+            capacity,
+            friendly: per_team,
+            enemy: per_team,
+            ..*self
+        }
     }
 }
 
@@ -225,9 +230,14 @@ impl Infantry {
             Vec2::new(arena.width() * 0.30, arena.height() * 0.56),
         );
         for i in 0..cfg.friendly {
-            let p =
-                self.formation_point(i, cfg.friendly, Vec2::ZERO, friendly_bounds, min_spread);
-            units.push(GpuUnit::spawn(p, Vec2::ZERO, Team::Friendly, 100.0, seed_of(i)));
+            let p = self.formation_point(i, cfg.friendly, Vec2::ZERO, friendly_bounds, min_spread);
+            units.push(GpuUnit::spawn(
+                p,
+                Vec2::ZERO,
+                Team::Friendly,
+                100.0,
+                seed_of(i),
+            ));
         }
 
         // przeciwnicy: dwa skrzydełka po bokach, żeby ruch formacji był widoczny.
@@ -280,7 +290,9 @@ impl Infantry {
         // renderer, więc w trakcie tego pożyczania nie wolno sięgać po `ctx`.
         let army = self.build_army(arena);
         {
-            let Some(sim) = ctx.sim_mut() else { return false };
+            let Some(sim) = ctx.sim_mut() else {
+                return false;
+            };
             *sim.params_mut() = SimParams::for_arena(arena, self.config.capacity, 8.0);
             let style = sim.style_mut();
             style.radius = self.config.unit_size;
@@ -386,15 +398,13 @@ impl Infantry {
             .layer(101)
             .color(Color::from_hex(0x8FA6C4))
             .draw_text(font, &line, Vec2::new(24.0, 58.0), 16.0, TextAlign::Left);
-        ctx.gfx
-            .color(Color::from_hex(0x64789A))
-            .draw_text(
-                font,
-                "RMB — nowy punkt zgrupowania    F — uzupełnienie z rezerwy",
-                Vec2::new(24.0, 80.0),
-                14.0,
-                TextAlign::Left,
-            );
+        ctx.gfx.color(Color::from_hex(0x64789A)).draw_text(
+            font,
+            "RMB — nowy punkt zgrupowania    F — uzupełnienie z rezerwy",
+            Vec2::new(24.0, 80.0),
+            14.0,
+            TextAlign::Left,
+        );
     }
 }
 
@@ -499,7 +509,10 @@ mod tests {
         // szyk ma rozłożyć jednostki, nie kłaść je w jednym punkcie
         let mut inf = Infantry::new(small_config());
         let army = inf.build_army(arena());
-        let friendly: Vec<Vec2> = army[..inf.config().friendly].iter().map(|u| u.pos()).collect();
+        let friendly: Vec<Vec2> = army[..inf.config().friendly]
+            .iter()
+            .map(|u| u.pos())
+            .collect();
         let mut min_x = f32::MAX;
         let mut max_x = f32::MIN;
         for p in &friendly {
@@ -534,7 +547,10 @@ mod tests {
         // dałaby armię dłuższą niż bufor — dlatego mamy `with_capacity`.
         let c = InfantryConfig::default().with_capacity(10_000);
         assert_eq!(c.capacity, 10_000);
-        assert_eq!(c.reserve_start() + (c.capacity - c.reserve_start()), c.capacity);
+        assert_eq!(
+            c.reserve_start() + (c.capacity - c.reserve_start()),
+            c.capacity
+        );
         assert!(c.friendly + c.enemy + (c.capacity - c.reserve_start()) == c.capacity);
         assert!(c.reserve_start() <= c.capacity);
     }

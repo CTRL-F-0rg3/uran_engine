@@ -29,17 +29,17 @@ pub mod scene3d;
 pub mod shape;
 pub mod text;
 
+pub use backend::device::GpuContext;
 pub use batch::{
     DrawList, Globals, MeshDraw, MeshGeometry, MeshPushConstants, NineSliceDraw, SpriteDraw,
     SpriteInstance, TextAlign, TextDraw, TextureKey,
 };
-pub use backend::device::GpuContext;
 pub use camera::{screen_matrix, Camera2d};
-pub use scene3d::{Scene3d, Scene3dTarget};
 pub use compute::{GpuSim, GpuUnit, SimParams, SimStats, Team, UnitFlags};
 pub use graphics::{DrawStyle, Graphics};
 pub use mesh_builder::MeshBuilder;
 pub use renderer::{FrameStats, Renderer, ScreenshotRequest};
+pub use scene3d::{Scene3d, Scene3dTarget};
 pub use shape::{circle, polygon, ring, rounded_rect, star, thick_line, triangulate};
 pub use text::{FontMetrics, FontRegistry, GlyphInfo, ATLAS_SIZE};
 

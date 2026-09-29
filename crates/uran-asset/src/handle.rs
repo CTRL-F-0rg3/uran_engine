@@ -63,13 +63,21 @@ impl<T> Handle<T> {
     /// [`crate::server::Assets`]; ten konstruktor jest potrzebny głównie
     /// w testach i narzędziach.
     pub const fn new(index: u32, generation: u32) -> Self {
-        Self { index, generation, _marker: PhantomData }
+        Self {
+            index,
+            generation,
+            _marker: PhantomData,
+        }
     }
 
     /// Odtwarza uchwyt z typowego `HandleId` (np. przy lookupie po kluczu
     /// tekstury w rendererze).
     pub const fn from_id(id: HandleId) -> Self {
-        Self { index: id.index, generation: id.generation, _marker: PhantomData }
+        Self {
+            index: id.index,
+            generation: id.generation,
+            _marker: PhantomData,
+        }
     }
 
     /// Indeks w tablicy assetów (przydatne do debugowania / wskaźników).
@@ -84,7 +92,11 @@ impl<T> Handle<T> {
 
     /// „Pusty" uchwyt — nigdy nie wskazuje na istniejący asset.
     pub const fn invalid() -> Self {
-        Self { index: u32::MAX, generation: u32::MAX, _marker: PhantomData }
+        Self {
+            index: u32::MAX,
+            generation: u32::MAX,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -116,7 +128,10 @@ pub struct HandleId {
 
 impl<T> From<Handle<T>> for HandleId {
     fn from(h: Handle<T>) -> Self {
-        Self { index: h.index, generation: h.generation }
+        Self {
+            index: h.index,
+            generation: h.generation,
+        }
     }
 }
 

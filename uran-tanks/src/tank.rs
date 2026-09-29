@@ -178,9 +178,7 @@ impl Tank {
             } else {
                 self.speed - self.speed.signum() * drop
             };
-        } else if (target - self.speed).abs() > 0.001
-            && (target > 0.0) == (self.speed >= 0.0)
-        {
+        } else if (target - self.speed).abs() > 0.001 && (target > 0.0) == (self.speed >= 0.0) {
             // przyspieszamy w tym samym kierunku co cel
             self.speed += (target - self.speed).signum() * c.accel * dt * throttle.abs();
         } else {
@@ -193,7 +191,11 @@ impl Tank {
         self.pos += self.forward() * (self.speed * dt);
 
         // --- obrót kadłuba: gąsiennice „trzymają" tylko słabo w ruchu
-        let grip = if self.speed.abs() < 0.5 { 1.0 } else { c.turn_grip };
+        let grip = if self.speed.abs() < 0.5 {
+            1.0
+        } else {
+            c.turn_grip
+        };
         self.heading += steer * c.turn_rate * grip * dt;
 
         // --- przeładowanie
@@ -226,10 +228,8 @@ impl Tank {
         }
         self.reload_left = self.config.reload;
         // odrzut w linii jazdy: pchamy czołg do tyłu
-        self.speed = (self.speed - self.config.recoil).clamp(
-            -self.config.reverse_speed,
-            self.config.max_speed,
-        );
+        self.speed = (self.speed - self.config.recoil)
+            .clamp(-self.config.reverse_speed, self.config.max_speed);
         Some(Shell {
             pos: self.muzzle(),
             // pocisk leci z prędkością zasięgu; w kroku symulacji
@@ -284,7 +284,10 @@ mod tests {
         fwd.update(4.0, 1.0, 0.0);
         let mut rev = tank();
         rev.update(4.0, -1.0, 0.0);
-        assert!(rev.speed.abs() < fwd.speed.abs(), "cofanie nie powinno być szybsze");
+        assert!(
+            rev.speed.abs() < fwd.speed.abs(),
+            "cofanie nie powinno być szybsze"
+        );
         assert!(rev.pos.z < 0.0, "cofanie nie cofało");
     }
 
@@ -312,7 +315,11 @@ mod tests {
         for _ in 0..20 {
             moving.update(0.1, 1.0, 0.0);
         }
-        assert!(moving.speed.abs() > 0.5, "czołg nie ruszył: {}", moving.speed);
+        assert!(
+            moving.speed.abs() > 0.5,
+            "czołg nie ruszył: {}",
+            moving.speed
+        );
 
         let parked_before = parked.heading;
         parked.update(1.0, 0.0, 1.0);
@@ -364,7 +371,10 @@ mod tests {
         let mut t = tank();
         assert!(t.fire().is_some());
         assert!(t.is_reloading());
-        assert!(t.fire().is_none(), "nie można strzelać w trakcie przeładowania");
+        assert!(
+            t.fire().is_none(),
+            "nie można strzelać w trakcie przeładowania"
+        );
     }
 
     #[test]
@@ -398,9 +408,17 @@ mod tests {
     fn aim_pitch_is_clamped() {
         let mut t = tank();
         t.aim(0.0, 10.0);
-        assert!(t.gun_pitch <= 0.51, "lufa patrzyła w kosmos: {}", t.gun_pitch);
+        assert!(
+            t.gun_pitch <= 0.51,
+            "lufa patrzyła w kosmos: {}",
+            t.gun_pitch
+        );
         t.aim(0.0, -10.0);
-        assert!(t.gun_pitch >= -0.16, "lufa patrzyła pod ziemię: {}", t.gun_pitch);
+        assert!(
+            t.gun_pitch >= -0.16,
+            "lufa patrzyła pod ziemię: {}",
+            t.gun_pitch
+        );
     }
 
     #[test]

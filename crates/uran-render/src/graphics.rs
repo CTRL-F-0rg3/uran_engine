@@ -23,7 +23,11 @@ pub struct DrawStyle {
 
 impl Default for DrawStyle {
     fn default() -> Self {
-        Self { color: Color::WHITE, blend: BlendMode::Alpha, layer: 0 }
+        Self {
+            color: Color::WHITE,
+            blend: BlendMode::Alpha,
+            layer: 0,
+        }
     }
 }
 
@@ -51,7 +55,10 @@ impl<'a> Graphics<'a> {
 
     /// Bieżąca macierz transformacji (w przestrzeni świata).
     pub fn transform(&self) -> Mat3 {
-        *self.stack.last().expect("stos transformacji nie może być pusty")
+        *self
+            .stack
+            .last()
+            .expect("stos transformacji nie może być pusty")
     }
 
     // --- Style ---
@@ -163,8 +170,7 @@ impl<'a> Graphics<'a> {
 
     /// Prostokąt wypełniony kolorem (`rect` w lokalnych współrzędnych).
     pub fn draw_rect(&mut self, rect: Rect) -> &mut Self {
-        let mut sprite =
-            SpriteDraw::rect(rect, self.transform(), UvRect::FULL, self.style.color);
+        let mut sprite = SpriteDraw::rect(rect, self.transform(), UvRect::FULL, self.style.color);
         sprite.blend = self.style.blend;
         sprite.layer = self.style.layer;
         sprite.screen_space = self.screen_space;
@@ -190,7 +196,13 @@ impl<'a> Graphics<'a> {
 
     /// Pierścień.
     pub fn draw_ring(&mut self, center: Vec2, radius: f32, thickness: f32) -> &mut Self {
-        self.draw_mesh(&shape::ring(center, radius, thickness, 32, self.style.color))
+        self.draw_mesh(&shape::ring(
+            center,
+            radius,
+            thickness,
+            32,
+            self.style.color,
+        ))
     }
 
     /// Odcinek o grubości.
@@ -248,12 +260,7 @@ impl<'a> Graphics<'a> {
     }
 
     /// Sprite wyśrodkowany w punkcie (anchor = środek).
-    pub fn draw_sprite(
-        &mut self,
-        texture: Handle<Image>,
-        center: Vec2,
-        size: Vec2,
-    ) -> &mut Self {
+    pub fn draw_sprite(&mut self, texture: Handle<Image>, center: Vec2, size: Vec2) -> &mut Self {
         self.draw_texture(texture, Rect::from_center(center, size), UvRect::FULL)
     }
 
@@ -372,7 +379,11 @@ mod tests {
         let sprites = list.sprites();
         assert_eq!(sprites.len(), 1);
         // prostokąt 0..10 przesunięty o 100 -> środek 105
-        assert!(((sprites[0].transform * Vec2::ZERO.extend(1.0)).truncate() - Vec2::new(105.0, 5.0)).length() < 1e-4);
+        assert!(
+            ((sprites[0].transform * Vec2::ZERO.extend(1.0)).truncate() - Vec2::new(105.0, 5.0))
+                .length()
+                < 1e-4
+        );
         assert_eq!(sprites[0].color, Color::RED);
     }
 
@@ -384,8 +395,12 @@ mod tests {
         let mut list = DrawList::new();
         {
             let mut g = gfx(&mut list);
-            g.world_space().color(Color::WHITE).draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
-            g.screen_space().color(Color::WHITE).draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+            g.world_space()
+                .color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+            g.screen_space()
+                .color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
         }
         list.sort();
 
@@ -407,10 +422,12 @@ mod tests {
             assert!(!g.is_screen_space(), "domyślnie rysujemy w świecie");
             g.screen_space();
             assert!(g.is_screen_space());
-            g.color(Color::WHITE).draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+            g.color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
             g.world_space();
             assert!(!g.is_screen_space());
-            g.color(Color::WHITE).draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+            g.color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
         }
         assert!(list.sprites()[0].screen_space);
         assert!(!list.sprites()[1].screen_space);
@@ -425,12 +442,18 @@ mod tests {
             g.translate(Vec2::new(500.0, 300.0)); // "zanieczyszczenie" ze sceny
             let _ = g.transform();
             g.screen_space();
-            g.color(Color::WHITE).draw_rect(Rect::from_xywh(10.0, 20.0, 30.0, 40.0));
+            g.color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(10.0, 20.0, 30.0, 40.0));
             g.world_space();
-            g.color(Color::WHITE).draw_rect(Rect::from_xywh(10.0, 20.0, 30.0, 40.0));
+            g.color(Color::WHITE)
+                .draw_rect(Rect::from_xywh(10.0, 20.0, 30.0, 40.0));
             g.transform()
         };
-        assert_eq!(transform, Mat3::IDENTITY, "stos transformacji musi być czysty");
+        assert_eq!(
+            transform,
+            Mat3::IDENTITY,
+            "stos transformacji musi być czysty"
+        );
     }
 
     #[test]
@@ -484,7 +507,11 @@ mod tests {
         let mut list = DrawList::new();
         {
             let mut g = gfx(&mut list);
-            g.draw_texture_9slice(Handle::new(0, 0), Rect::from_xywh(0.0, 0.0, 100.0, 40.0), 8.0);
+            g.draw_texture_9slice(
+                Handle::new(0, 0),
+                Rect::from_xywh(0.0, 0.0, 100.0, 40.0),
+                8.0,
+            );
         }
         assert_eq!(list.nine_slices().len(), 1);
         assert_eq!(list.nine_slices()[0].border, 8.0);
@@ -496,7 +523,13 @@ mod tests {
         {
             let mut g = gfx(&mut list);
             g.layer(5).color(Color::YELLOW);
-            g.draw_text(Handle::new(0, 0), "witaj", Vec2::new(10.0, 20.0), 16.0, TextAlign::Center);
+            g.draw_text(
+                Handle::new(0, 0),
+                "witaj",
+                Vec2::new(10.0, 20.0),
+                16.0,
+                TextAlign::Center,
+            );
         }
         let texts = list.texts();
         assert_eq!(texts.len(), 1);

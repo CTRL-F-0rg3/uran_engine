@@ -98,8 +98,11 @@ pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
     }
 
     if remaining.len() == 3 {
-        indices
-            .extend_from_slice(&[remaining[0] as u32, remaining[1] as u32, remaining[2] as u32]);
+        indices.extend_from_slice(&[
+            remaining[0] as u32,
+            remaining[1] as u32,
+            remaining[2] as u32,
+        ]);
     }
     indices
 }
@@ -107,7 +110,10 @@ pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
 /// Wypełniony wielokąt o jednolitym kolorze.
 pub fn polygon(points: &[Vec2], color: Color) -> Mesh {
     let indices = triangulate(points);
-    Mesh::new(points.iter().map(|p| Vertex::new(*p, color)).collect(), indices)
+    Mesh::new(
+        points.iter().map(|p| Vertex::new(*p, color)).collect(),
+        indices,
+    )
 }
 
 /// Okrąg wypełniony, złożony z `segments` trójkątów.
@@ -117,14 +123,16 @@ pub fn circle(center: Vec2, radius: f32, segments: u32, color: Color) -> Mesh {
     vertices.push(Vertex::new(center, color));
     for i in 0..segments {
         let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
-        vertices.push(Vertex::new(center + Vec2::new(angle.cos(), angle.sin()) * radius, color));
+        vertices.push(Vertex::new(
+            center + Vec2::new(angle.cos(), angle.sin()) * radius,
+            color,
+        ));
     }
     let indices = (0..segments as u32)
         .flat_map(|i| [0, i + 1, ((i + 1) % segments as u32) + 1])
         .collect();
     Mesh::new(vertices, indices)
 }
-
 
 /// Pierścień (okrąg z dziurą) — grubość liczona od środka do krawędzi wewnętrznej.
 pub fn ring(center: Vec2, radius: f32, thickness: f32, segments: u32, color: Color) -> Mesh {
@@ -190,7 +198,10 @@ pub fn thick_line(from: Vec2, to: Vec2, width: f32, color: Color) -> Mesh {
         );
     }
     let normal = Vec2::new(-direction.y, direction.x).normalize() * half;
-    Mesh::quad([from + normal, to + normal, to - normal, from - normal], color)
+    Mesh::quad(
+        [from + normal, to + normal, to - normal, from - normal],
+        color,
+    )
 }
 
 /// Łamana o zadanej grubości (każdy odcinek osobnym czworokątem).
@@ -211,7 +222,6 @@ pub fn rect_outline(rect: Rect, width: f32, color: Color) -> Mesh {
     let [bl, br, tr, tl] = rect.corners();
     polyline(&[bl, br, tr, tl, bl], width, color)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -277,7 +287,11 @@ mod tests {
     fn triangulate_rejects_degenerate() {
         assert!(triangulate(&[Vec2::ZERO, Vec2::X]).is_empty());
         // wszystkie punkty na jednej prostej
-        let collinear = vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(2.0, 0.0)];
+        let collinear = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(2.0, 0.0),
+        ];
         assert!(triangulate(&collinear).is_empty());
     }
 
@@ -300,7 +314,10 @@ mod tests {
         let m = ring(Vec2::ZERO, 10.0, 2.0, 32, Color::WHITE);
         let area = triangle_area_sum(&m);
         let expected = std::f32::consts::PI * (100.0 - 64.0);
-        assert!((area - expected).abs() < 1.0, "pole = {area}, oczekiwano {expected}");
+        assert!(
+            (area - expected).abs() < 1.0,
+            "pole = {area}, oczekiwano {expected}"
+        );
     }
 
     #[test]
@@ -315,7 +332,10 @@ mod tests {
         let rounded = rounded_rect(rect, 6.0, 8, Color::WHITE);
         assert!(rounded.validate());
         let area = triangle_area_sum(&rounded);
-        assert!(area < 400.0 && area > 340.0, "zaokrąglenia zjadły narożniki: {area}");
+        assert!(
+            area < 400.0 && area > 340.0,
+            "zaokrąglenia zjadły narożniki: {area}"
+        );
     }
 
     #[test]
@@ -326,7 +346,11 @@ mod tests {
 
     #[test]
     fn polyline_sums_segments() {
-        let m = polyline(&[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)], 2.0, Color::WHITE);
+        let m = polyline(
+            &[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)],
+            2.0,
+            Color::WHITE,
+        );
         assert_eq!(m.triangle_count(), 4, "2 odcinki po 2 trójkąty");
         assert!((triangle_area_sum(&m) - 40.0).abs() < 0.01);
     }
@@ -343,7 +367,11 @@ mod tests {
     fn star_is_concave_but_triangulates() {
         let m = star(Vec2::ZERO, 5, 0.4, 10.0, Color::WHITE);
         assert!(m.validate());
-        assert_eq!(m.triangle_count(), 8, "5 ramion = 10 wierzchołków = 8 trójkątów");
+        assert_eq!(
+            m.triangle_count(),
+            8,
+            "5 ramion = 10 wierzchołków = 8 trójkątów"
+        );
         assert!(triangle_area_sum(&m) > 0.0);
     }
 
@@ -359,7 +387,11 @@ pub fn star(center: Vec2, points: u32, inner_ratio: f32, radius: f32, color: Col
     let points = points.max(3);
     let mut pts = Vec::with_capacity(points as usize * 2);
     for i in 0..points * 2 {
-        let r = if i % 2 == 0 { radius } else { radius * inner_ratio };
+        let r = if i % 2 == 0 {
+            radius
+        } else {
+            radius * inner_ratio
+        };
         let angle = (i as f32 / (points * 2) as f32) * std::f32::consts::TAU;
         pts.push(center + Vec2::new(angle.cos(), angle.sin()) * r);
     }

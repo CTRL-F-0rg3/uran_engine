@@ -11,7 +11,8 @@ use winit::window::Window;
 
 use crate::backend::device::{GpuContext, RenderError};
 use crate::backend::pipeline::{
-    create_sampler, create_texture_bind_group_layout, quad_indices, unit_quad_vertices, PipelineCache,
+    create_sampler, create_texture_bind_group_layout, quad_indices, unit_quad_vertices,
+    PipelineCache,
 };
 use crate::backend::texture::TextureRegistry;
 use crate::batch::{
@@ -108,11 +109,7 @@ pub struct ScreenshotRequest {
 }
 
 impl Renderer {
-    pub async fn new(
-        window: Arc<Window>,
-        vsync: bool,
-        samples: u32,
-    ) -> Result<Self, RenderError> {
+    pub async fn new(window: Arc<Window>, vsync: bool, samples: u32) -> Result<Self, RenderError> {
         let gpu = GpuContext::new(window, vsync, samples).await?;
         let device = &gpu.device;
 
@@ -206,7 +203,10 @@ impl Renderer {
     /// Przydatne do testów „czy coś się w ogóle rysuje" oraz do menu
     /// „zrób zrzut ekranu" w grze.
     pub fn request_screenshot(&mut self, path: impl Into<std::path::PathBuf>, frames: u32) {
-        self.screenshot = Some(ScreenshotRequest { path: path.into(), frames });
+        self.screenshot = Some(ScreenshotRequest {
+            path: path.into(),
+            frames,
+        });
     }
 
     /// Włącza symulację jednostek na GPU.
@@ -215,7 +215,12 @@ impl Renderer {
     /// pozycje żyją wyłącznie na karcie: CPU wysyła w klatce 96 B
     /// parametrów, a pozycje czyta shader wierzchołkowy.
     pub fn enable_gpu_sim(&mut self, capacity: usize) {
-        let sim = GpuSim::new(&self.gpu, capacity, self.pipelines.format, self.pipelines.samples);
+        let sim = GpuSim::new(
+            &self.gpu,
+            capacity,
+            self.pipelines.format,
+            self.pipelines.samples,
+        );
         self.sim = Some(sim);
     }
 
@@ -326,7 +331,9 @@ impl Renderer {
     /// Czy podany prostokąt świata widać (odrzucanie pracy poza ekranem).
     pub fn is_visible(&self, camera: &Camera2d, aabb: uran_math::Rect) -> bool {
         let (w, h) = self.size();
-        camera.visible_rect(Vec2::new(w as f32, h as f32)).intersects(&aabb)
+        camera
+            .visible_rect(Vec2::new(w as f32, h as f32))
+            .intersects(&aabb)
     }
 
     /// Rozszerza listę o tekst: zamienia `TextDraw` na sprite'y glifów.
@@ -528,11 +535,9 @@ impl Renderer {
                     SpriteInstance::new(s.transform, uv, s.color)
                 })
                 .collect();
-            self.gpu.queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&instances),
-            );
+            self.gpu
+                .queue
+                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
         }
 
         // 3) faza przygotowania (potrzebuje &mut): wgrywamy tekstury i tworzymy
@@ -564,14 +569,19 @@ impl Renderer {
         if std::env::var("URAN_DEBUG").is_ok() && self.frame_index <= 1 {
             eprintln!("[uran-render] okno={window_size:?}");
             eprintln!("[uran-render]   świat view_proj={:?}", globals.view_proj);
-            eprintln!("[uran-render]   ekran view_proj={:?}", screen_globals.view_proj);
+            eprintln!(
+                "[uran-render]   ekran view_proj={:?}",
+                screen_globals.view_proj
+            );
         }
 
         // 5) render pass
         let surface_texture = match self.gpu.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.gpu.surface.configure(&self.gpu.device, &self.gpu.config);
+                self.gpu
+                    .surface
+                    .configure(&self.gpu.device, &self.gpu.config);
                 return FrameStats::default();
             }
             Err(wgpu::SurfaceError::Timeout) => return FrameStats::default(),
@@ -601,7 +611,9 @@ impl Renderer {
         let mut encoder = self
             .gpu
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Uran Encoder") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Uran Encoder"),
+            });
 
         // 5a) symulacja jednostek na GPU — compute w tym samym encoderze,
         // więc w tej samej klatce render pass widzi już nowe pozycje
@@ -695,14 +707,15 @@ impl Renderer {
         // statystyki nigdy nie dotarłyby z GPU i HUD pokazywałby zera.
         // `Poll` nie czeka na GPU — tylko obsługuje callbacki, więc
         // nie kosztuje przyszłego klatki.
-        self.gpu
-            .device
-            .poll(wgpu::Maintain::Poll);
+        self.gpu.device.poll(wgpu::Maintain::Poll);
 
         if std::env::var("URAN_DEBUG").is_ok() && self.frame_index <= 1 {
             eprintln!("[uran-render] okno={window_size:?}");
             eprintln!("[uran-render]   świat  view_proj={:?}", globals.view_proj);
-            eprintln!("[uran-render]   ekran  view_proj={:?}", screen_globals.view_proj);
+            eprintln!(
+                "[uran-render]   ekran  view_proj={:?}",
+                screen_globals.view_proj
+            );
             for (i, s) in list.sprites().iter().take(4).enumerate() {
                 let c = s.transform.to_cols_array_2d();
                 eprintln!(
@@ -737,7 +750,11 @@ impl Renderer {
         let (width, height) = self.gpu.size();
         let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Uran MSAA"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: self.pipelines.samples,
             dimension: wgpu::TextureDimension::D2,
@@ -793,7 +810,11 @@ impl Renderer {
                 pass.set_bind_group(1, &self.globals_bind_group, &[]);
             }
             pass.set_bind_group(0, self.textures.get_bound(first.texture), &[]);
-            pass.draw_indexed(0..self.quad_index_count, 0, run_start as u32..run_end as u32);
+            pass.draw_indexed(
+                0..self.quad_index_count,
+                0,
+                run_start as u32..run_end as u32,
+            );
             draw_calls += 1;
             run_start = run_end;
         }
@@ -808,11 +829,15 @@ impl Renderer {
         let mut draw_calls = 0;
 
         for mesh in list.meshes() {
-            let Some(geo) = geometry.get(mesh.geometry as usize) else { continue };
+            let Some(geo) = geometry.get(mesh.geometry as usize) else {
+                continue;
+            };
             if geo.indices.is_empty() {
                 continue;
             }
-            let Some(gpu_mesh) = self.meshes.get(&geo.hash) else { continue };
+            let Some(gpu_mesh) = self.meshes.get(&geo.hash) else {
+                continue;
+            };
 
             let push = MeshPushConstants::new(mesh.transform, mesh.color);
             pass.set_pipeline(self.pipelines.mesh(mesh.blend));
@@ -823,11 +848,7 @@ impl Renderer {
                 pass.set_bind_group(1, &self.globals_bind_group, &[]);
             }
             pass.set_bind_group(0, self.textures.get_bound(mesh.texture), &[]);
-            pass.set_push_constants(
-                wgpu::ShaderStages::VERTEX,
-                0,
-                bytemuck::bytes_of(&push),
-            );
+            pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
             pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
             pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
@@ -854,20 +875,22 @@ impl Renderer {
             let c = uran_math::Color::rgba(v.color[0], v.color[1], v.color[2], v.color[3]);
             v.color = c.to_linear().to_array();
         }
-        let vertex_buffer = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Uran Mesh Vertices"),
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
-            },
-        );
-        let index_buffer = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+            });
+        let index_buffer = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Uran Mesh Indices"),
                 contents: bytemuck::cast_slice(&geometry.indices),
                 usage: wgpu::BufferUsages::INDEX,
-            },
-        );
+            });
         self.meshes.insert(
             geometry.hash,
             GpuMesh {
@@ -886,18 +909,15 @@ impl Renderer {
         }
         let frame = self.frame_index;
         let ttl = self.mesh_ttl;
-        self.meshes.retain(|_, mesh| frame.saturating_sub(mesh.last_used_frame) < ttl);
+        self.meshes
+            .retain(|_, mesh| frame.saturating_sub(mesh.last_used_frame) < ttl);
     }
 
     /// Zapisuje bieżącą klatkę swapchainu do pliku PNG.
     ///
     /// Czyta piksele z GPU i zamienia format powierzchni (może być BGRA)
     /// na RGBA, którego oczekuje `image`.
-    fn save_screenshot(
-        &self,
-        surface: &wgpu::SurfaceTexture,
-        path: &std::path::Path,
-    ) {
+    fn save_screenshot(&self, surface: &wgpu::SurfaceTexture, path: &std::path::Path) {
         let (width, height) = self.gpu.size();
         let format = self.gpu.config.format;
         let bytes_per_row = width * 4;
@@ -913,7 +933,9 @@ impl Renderer {
         let mut encoder = self
             .gpu
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Screenshot Copy") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Screenshot Copy"),
+            });
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
                 texture: &surface.texture,
@@ -929,7 +951,11 @@ impl Renderer {
                     rows_per_image: Some(height),
                 },
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         self.gpu.queue.submit(Some(encoder.finish()));
 

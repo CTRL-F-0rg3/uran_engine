@@ -34,9 +34,9 @@ const ENEMY_COUNT: usize = 5;
 ///
 /// Dalej niż w FPS-ach, bo czołg ma 6,4 m długości: przy 11 m widać
 /// tylko dach kadłuba i nie ma pojęcia, gdzie się stoją przeciwnicy.
-const CAM_BACK: f32 = 17.0;
+const CAM_BACK: f32 = 15.0;
 /// Wysokość kamery nad ziemią.
-const CAM_UP: f32 = 6.5;
+const CAM_UP: f32 = 5.2;
 
 /// Identyfikatory siatek — rejestrowane raz przy starcie.
 struct Meshes {
@@ -66,8 +66,10 @@ impl Game {
     /// Buduje świat i renderer 3D na gotowym urządzeniu.
     fn new(gpu: &uran_render::GpuContext, format: wgpu::TextureFormat, samples: u32) -> Self {
         let mut scene = Renderer3d::new(gpu, format, samples);
-        // niebo: chłodny błękit, pasujący do mgły w shaderze
-        scene.set_clear_color([0.47, 0.58, 0.70, 1.0]);
+        // Niebo: głęboki błękit u góry. Kolor podajemy w sRGB i wypełniamy
+        // nim CAŁY kadru — gradient nieba dochodzi dopiero w shaderze nieba,
+        // a mgła w shaderze sceny musi z nim się zgadzać.
+        scene.set_clear_color([0.42, 0.58, 0.78, 1.0]);
 
         let world = World::new(ENEMY_COUNT);
         let ground = build_ground(&world.terrain);
@@ -80,16 +82,16 @@ impl Game {
             gun: scene.add_mesh(gpu, &tank_gun(), "gun"),
             cupola: scene.add_mesh(gpu, &tank_cupola(palette::PLAYER), "cupola"),
             ground: scene.add_mesh(gpu, &ground, "ground"),
-            shell: scene.add_mesh(gpu, &geometry::box_mesh(
-                Vec3::ZERO,
-                Vec3::splat(0.22),
-                [1.0, 0.85, 0.45],
-            ), "shell"),
-            spark: scene.add_mesh(gpu, &geometry::box_mesh(
-                Vec3::ZERO,
-                Vec3::splat(0.16),
-                [1.0, 0.7, 0.25],
-            ), "spark"),
+            shell: scene.add_mesh(
+                gpu,
+                &geometry::box_mesh(Vec3::ZERO, Vec3::splat(0.22), [1.0, 0.85, 0.45]),
+                "shell",
+            ),
+            spark: scene.add_mesh(
+                gpu,
+                &geometry::box_mesh(Vec3::ZERO, Vec3::splat(0.16), [1.0, 0.7, 0.25]),
+                "spark",
+            ),
         };
 
         Self {
@@ -113,8 +115,8 @@ impl Game {
 /// Świadomie gęsta (krok 4 jednostki) — przy rzadszej siatce pagórki
 /// wyglądają jak ostre kryształy, a czołgi „wiszą" nad terenem.
 fn build_ground(terrain: &world::Terrain) -> uran_render3d::Mesh {
-    use uran_render3d::{Mesh, Vertex};
     use uran_math::Vec3;
+    use uran_render3d::{Mesh, Vertex};
 
     let half = world::ARENA_HALF;
     let step = 4.0;
@@ -203,9 +205,10 @@ fn build_draw_list(game: &mut Game) {
     let one = [1.0; 4];
     let m = &game.meshes;
     // teren
-    cmds.push(DrawCmd::new(m.ground, model_matrix(
-        Vec3::ZERO, 0.0, 0.0, 0.0, Vec3::ONE,
-    )));
+    cmds.push(DrawCmd::new(
+        m.ground,
+        model_matrix(Vec3::ZERO, 0.0, 0.0, 0.0, Vec3::ONE),
+    ));
 
     // przeciwnicy (za dziesiątkami, żeby gracz był na wierzchu)
     for e in game.world.enemies.iter().filter(|e| e.is_alive()) {
@@ -245,12 +248,7 @@ fn build_draw_list(game: &mut Game) {
     }
 }
 /// Dokłada komponenty jednego czołgu (kadłub, gąsiennice, wieża, lufa).
-fn push_tank(
-    cmds: &mut Vec<DrawCmd>,
-    m: &Meshes,
-    p: TankPose,
-    tint: &[f32; 4],
-) {
+fn push_tank(cmds: &mut Vec<DrawCmd>, m: &Meshes, p: TankPose, tint: &[f32; 4]) {
     use uran_math::Vec3;
     use uran_render3d::model_matrix;
 
@@ -277,9 +275,7 @@ fn push_tank(
 /// wzdłuż lufy dawałoby kadr „ziemia tuż pod nosem" przy jej pochyleniu.
 fn update_camera(game: &mut Game) {
     let t = &game.world.player;
-    let eye = t.pos
-        + Vec3::new(0.0, CAM_UP, 0.0)
-        - t.forward() * CAM_BACK;
+    let eye = t.pos + Vec3::new(0.0, CAM_UP, 0.0) - t.forward() * CAM_BACK;
     // punkt, w który patrzymy: 10 m przed wieżą, lekko w górę
     let look = t.turret_position() + t.aim_dir() * 10.0 + Vec3::new(0.0, 1.0, 0.0);
 
@@ -351,7 +347,10 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
 
     // --- pasek HP gracza (u dołu ekranu)
     let w = 300.0;
-    let bar = Rect::new(Vec2::new(24.0, size.y - 54.0), Vec2::new(24.0 + w, size.y - 32.0));
+    let bar = Rect::new(
+        Vec2::new(24.0, size.y - 54.0),
+        Vec2::new(24.0 + w, size.y - 32.0),
+    );
     ctx.gfx
         .screen_space()
         .layer(100)
@@ -389,8 +388,7 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
         );
 
     // --- pasek przeładowania przy celowniku
-    let reload_ratio =
-        1.0 - game.world.player.reload_left / game.world.player.config.reload;
+    let reload_ratio = 1.0 - game.world.player.reload_left / game.world.player.config.reload;
     if reload_ratio < 1.0 {
         let rw = 90.0;
         let rbar = Rect::new(
@@ -409,20 +407,18 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
     }
 
     // --- info: przeciwnicy, cele, FPS
-    ctx.gfx
-        .color(Color::from_hex(0x8FA6C4))
-        .draw_text(
-            font,
-            &format!(
-                "Enemies: {}   hits: {}   kills: {}",
-                game.world.enemies_left(),
-                game.world.player_hits,
-                game.world.enemy_kills
-            ),
-            Vec2::new(24.0, 26.0),
-            16.0,
-            TextAlign::Left,
-        );
+    ctx.gfx.color(Color::from_hex(0x8FA6C4)).draw_text(
+        font,
+        &format!(
+            "Enemies: {}   hits: {}   kills: {}",
+            game.world.enemies_left(),
+            game.world.player_hits,
+            game.world.enemy_kills
+        ),
+        Vec2::new(24.0, 26.0),
+        16.0,
+        TextAlign::Left,
+    );
 
     let fps = ctx.time.fps();
     let objects = game.scene.lock().map(|s| s.last_draw_count).unwrap_or(0);
@@ -445,27 +441,23 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
             .layer(110)
             .color(Color::from_hex(0x140A0A).with_alpha(0.72))
             .draw_rect(Rect::from_center(size * 0.5, size));
-        ctx.gfx
-            .color(Color::from_hex(0xFF6B6B))
-            .draw_text(
-                font,
-                "TANK DESTROYED",
-                Vec2::new(cx, cy - 10.0),
-                44.0,
-                TextAlign::Center,
-            );
-        ctx.gfx
-            .color(Color::from_hex(0xC8D4E8))
-            .draw_text(
-                font,
-                &format!(
-                    "hits: {}   kills: {}   R restart",
-                    game.world.player_hits, game.world.enemy_kills
-                ),
-                Vec2::new(cx, cy + 30.0),
-                18.0,
-                TextAlign::Center,
-            );
+        ctx.gfx.color(Color::from_hex(0xFF6B6B)).draw_text(
+            font,
+            "TANK DESTROYED",
+            Vec2::new(cx, cy - 10.0),
+            44.0,
+            TextAlign::Center,
+        );
+        ctx.gfx.color(Color::from_hex(0xC8D4E8)).draw_text(
+            font,
+            &format!(
+                "hits: {}   kills: {}   R restart",
+                game.world.player_hits, game.world.enemy_kills
+            ),
+            Vec2::new(cx, cy + 30.0),
+            18.0,
+            TextAlign::Center,
+        );
     }
 }
 
@@ -604,7 +596,11 @@ mod tests {
         let mut rng = world::Rng::new(7);
         let terrain = world::Terrain::new(&mut rng);
         let mesh = build_ground(&terrain);
-        assert!(mesh.vertices.len() > 1000, "teren jest pusty: {}", mesh.vertices.len());
+        assert!(
+            mesh.vertices.len() > 1000,
+            "teren jest pusty: {}",
+            mesh.vertices.len()
+        );
         for (i, v) in mesh.vertices.iter().enumerate() {
             assert_eq!(
                 v.normal(),
@@ -620,10 +616,24 @@ mod tests {
         let mut rng = world::Rng::new(7);
         let terrain = world::Terrain::new(&mut rng);
         let mesh = build_ground(&terrain);
-        let min_x = mesh.vertices.iter().map(|v| v.pos().x).fold(f32::MAX, f32::min);
-        let max_x = mesh.vertices.iter().map(|v| v.pos().x).fold(f32::MIN, f32::max);
-        assert!(min_x <= -world::ARENA_HALF + 0.1, "teren nie dochodzi do lewej krawędzi");
-        assert!(max_x >= world::ARENA_HALF - 0.1, "teren nie dochodzi do prawej krawędzi");
+        let min_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v.pos().x)
+            .fold(f32::MAX, f32::min);
+        let max_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v.pos().x)
+            .fold(f32::MIN, f32::max);
+        assert!(
+            min_x <= -world::ARENA_HALF + 0.1,
+            "teren nie dochodzi do lewej krawędzi"
+        );
+        assert!(
+            max_x >= world::ARENA_HALF - 0.1,
+            "teren nie dochodzi do prawej krawędzi"
+        );
     }
 
     #[test]

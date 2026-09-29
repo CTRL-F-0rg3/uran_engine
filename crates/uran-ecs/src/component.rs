@@ -17,10 +17,17 @@ pub struct Transform {
 }
 
 impl Transform {
-    pub const IDENTITY: Self = Self { translation: Vec2::ZERO, rotation: 0.0, scale: Vec2::ONE };
+    pub const IDENTITY: Self = Self {
+        translation: Vec2::ZERO,
+        rotation: 0.0,
+        scale: Vec2::ONE,
+    };
 
     pub fn from_translation(translation: Vec2) -> Self {
-        Self { translation, ..Self::IDENTITY }
+        Self {
+            translation,
+            ..Self::IDENTITY
+        }
     }
 
     pub fn from_xy(x: f32, y: f32) -> Self {
@@ -84,7 +91,11 @@ pub struct Vertex {
 
 impl Vertex {
     pub fn new(position: Vec2, color: Color) -> Self {
-        Self { position: position.to_array(), uv: [0.0, 0.0], color: color.to_array() }
+        Self {
+            position: position.to_array(),
+            uv: [0.0, 0.0],
+            color: color.to_array(),
+        }
     }
 
     pub fn with_uv(mut self, uv: Vec2) -> Self {
@@ -108,7 +119,11 @@ impl Mesh {
     /// Pojedynczy trójkąt (3 wierzchołki, 3 indeksy).
     pub fn triangle(a: Vec2, b: Vec2, c: Vec2, color: Color) -> Self {
         Self {
-            vertices: vec![Vertex::new(a, color), Vertex::new(b, color), Vertex::new(c, color)],
+            vertices: vec![
+                Vertex::new(a, color),
+                Vertex::new(b, color),
+                Vertex::new(c, color),
+            ],
             indices: vec![0, 1, 2],
         }
     }
@@ -151,7 +166,10 @@ impl Default for UvRect {
 }
 
 impl UvRect {
-    pub const FULL: Self = Self { min: Vec2::ZERO, max: Vec2::ONE };
+    pub const FULL: Self = Self {
+        min: Vec2::ZERO,
+        max: Vec2::ONE,
+    };
 
     pub const fn new(min: Vec2, max: Vec2) -> Self {
         Self { min, max }
@@ -160,7 +178,10 @@ impl UvRect {
     /// Wyznacza UV z prostokąta w pikselach + rozmiaru całego obrazu.
     pub fn from_pixels(rect: uran_math::Rect, image_size: Vec2) -> Self {
         let size = image_size.max(Vec2::splat(1.0));
-        Self { min: rect.min / size, max: rect.max / size }
+        Self {
+            min: rect.min / size,
+            max: rect.max / size,
+        }
     }
 
     pub fn width(&self) -> f32 {
@@ -177,16 +198,25 @@ impl UvRect {
     }
 
     pub fn flip_x(&self) -> Self {
-        Self { min: Vec2::new(self.max.x, self.min.y), max: Vec2::new(self.min.x, self.max.y) }
+        Self {
+            min: Vec2::new(self.max.x, self.min.y),
+            max: Vec2::new(self.min.x, self.max.y),
+        }
     }
 
     pub fn flip_y(&self) -> Self {
-        Self { min: Vec2::new(self.min.x, self.max.y), max: Vec2::new(self.max.x, self.min.y) }
+        Self {
+            min: Vec2::new(self.min.x, self.max.y),
+            max: Vec2::new(self.max.x, self.min.y),
+        }
     }
 
     /// Przesuwa UV o wektor (przydatne przy animacji atlasu).
     pub fn offset(&self, offset: Vec2) -> Self {
-        Self { min: self.min + offset, max: self.max + offset }
+        Self {
+            min: self.min + offset,
+            max: self.max + offset,
+        }
     }
 }
 
@@ -210,7 +240,10 @@ impl Sprite {
     }
 
     pub fn sized(size: Vec2) -> Self {
-        Self { size: Some(size), ..Self::default() }
+        Self {
+            size: Some(size),
+            ..Self::default()
+        }
     }
 
     pub fn square(size: f32) -> Self {
@@ -257,17 +290,28 @@ pub struct Material {
 
 impl Default for Material {
     fn default() -> Self {
-        Self { color: Color::WHITE, texture: None, blend: BlendMode::default(), layer: 0 }
+        Self {
+            color: Color::WHITE,
+            texture: None,
+            blend: BlendMode::default(),
+            layer: 0,
+        }
     }
 }
 
 impl Material {
     pub fn color(color: Color) -> Self {
-        Self { color, ..Self::default() }
+        Self {
+            color,
+            ..Self::default()
+        }
     }
 
     pub fn texture(texture: Handle<Image>) -> Self {
-        Self { texture: Some(texture), ..Self::default() }
+        Self {
+            texture: Some(texture),
+            ..Self::default()
+        }
     }
 
     pub fn with_layer(mut self, layer: i32) -> Self {
@@ -330,7 +374,10 @@ mod tests {
         assert!(p.x.abs() < 1e-5 && (p.y - 1.0).abs() < 1e-5);
 
         let scaled = Transform::IDENTITY.with_uniform_scale(3.0);
-        assert_eq!(scaled.transform_point(Vec2::new(2.0, 1.0)), Vec2::new(6.0, 3.0));
+        assert_eq!(
+            scaled.transform_point(Vec2::new(2.0, 1.0)),
+            Vec2::new(6.0, 3.0)
+        );
     }
 
     #[test]
@@ -348,8 +395,10 @@ mod tests {
 
     #[test]
     fn uv_rect() {
-        let uv =
-            UvRect::from_pixels(uran_math::Rect::from_xywh(0.0, 0.0, 32.0, 16.0), Vec2::new(64.0, 32.0));
+        let uv = UvRect::from_pixels(
+            uran_math::Rect::from_xywh(0.0, 0.0, 32.0, 16.0),
+            Vec2::new(64.0, 32.0),
+        );
         assert_eq!(uv.min, Vec2::ZERO);
         assert_eq!(uv.max, Vec2::new(0.5, 0.5));
         assert_eq!(uv.map(Vec2::new(0.5, 0.5)), Vec2::new(0.25, 0.25));

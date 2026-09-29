@@ -141,11 +141,17 @@ impl FontEntry {
         let bounds = outlined.px_bounds();
         let w = bounds.width().ceil().max(0.0) as u32;
         let h = bounds.height().ceil().max(0.0) as u32;
-        let advance = self.font.h_advance_unscaled(id) / self.units_per_em * self.raster_size as f32;
+        let advance =
+            self.font.h_advance_unscaled(id) / self.units_per_em * self.raster_size as f32;
 
         if w == 0 || h == 0 {
             // spacja albo znak bez pokrycia
-            let info = GlyphInfo { rect: Rect::ZERO, offset: Vec2::ZERO, size: Vec2::ZERO, advance };
+            let info = GlyphInfo {
+                rect: Rect::ZERO,
+                offset: Vec2::ZERO,
+                size: Vec2::ZERO,
+                advance,
+            };
             self.glyphs.insert(id, Some(info));
             return Some(info);
         }
@@ -229,7 +235,10 @@ impl FontRegistry {
     pub const DEFAULT_RASTER_SIZE: u32 = 48;
 
     pub fn new() -> Self {
-        Self { fonts: Vec::new(), raster_size: Self::DEFAULT_RASTER_SIZE }
+        Self {
+            fonts: Vec::new(),
+            raster_size: Self::DEFAULT_RASTER_SIZE,
+        }
     }
 
     /// Zmiana skali rasteryzacji unieważnia atlasy.
@@ -283,8 +292,16 @@ impl FontRegistry {
 
     /// Metryki czcionki dla zadanego rozmiaru tekstu.
     pub fn metrics(&self, handle: HandleId, size: f32) -> FontMetrics {
-        let Some(entry) = self.fonts.get(handle.index() as usize).and_then(|f| f.as_ref()) else {
-            return FontMetrics { line_height: size, ascent: size, descent: 0.0 };
+        let Some(entry) = self
+            .fonts
+            .get(handle.index() as usize)
+            .and_then(|f| f.as_ref())
+        else {
+            return FontMetrics {
+                line_height: size,
+                ascent: size,
+                descent: 0.0,
+            };
         };
         let s = size / entry.units_per_em;
         FontMetrics {
@@ -296,7 +313,11 @@ impl FontRegistry {
 
     /// Szerokość tekstu w jednostkach świata (bez łamania wierszy).
     pub fn measure(&mut self, handle: HandleId, text: &str, size: f32) -> Vec2 {
-        let Some(entry) = self.fonts.get_mut(handle.index() as usize).and_then(|f| f.as_mut()) else {
+        let Some(entry) = self
+            .fonts
+            .get_mut(handle.index() as usize)
+            .and_then(|f| f.as_mut())
+        else {
             return Vec2::ZERO;
         };
         let scale = size / entry.units_per_em;
@@ -317,7 +338,11 @@ impl FontRegistry {
     /// (`cmd.size` to wysokość `em` w jednostkach świata).
     pub fn layout(&mut self, cmd: &TextDraw, transform: Mat3, out: &mut Vec<SpriteDraw>) {
         let key = HandleId::from(cmd.font);
-        let Some(entry) = self.fonts.get_mut(key.index() as usize).and_then(|f| f.as_mut()) else {
+        let Some(entry) = self
+            .fonts
+            .get_mut(key.index() as usize)
+            .and_then(|f| f.as_mut())
+        else {
             return;
         };
 
@@ -404,7 +429,9 @@ impl FontRegistry {
                             );
                             out.push(SpriteDraw {
                                 transform: transform
-                                    * Mat3::from_translation(local + Vec2::new(size.x, -size.y) * 0.5)
+                                    * Mat3::from_translation(
+                                        local + Vec2::new(size.x, -size.y) * 0.5,
+                                    )
                                     * Mat3::from_scale(size),
                                 uv,
                                 color: cmd.color,
@@ -474,7 +501,8 @@ mod tests {
         // prostokąt wypełniający arenę, przekształcony jak w SpriteDraw::rect
         let transform = Mat3::from_translation(arena.center()) * Mat3::from_scale(arena.size());
         // lewy dolny róg jednostkowego quada (-0.5, -0.5) i prawy górny (0.5, 0.5)
-        let bl = globals.transform_point((transform * Vec2::new(-0.5, -0.5).extend(1.0)).truncate());
+        let bl =
+            globals.transform_point((transform * Vec2::new(-0.5, -0.5).extend(1.0)).truncate());
         let tr = globals.transform_point((transform * Vec2::new(0.5, 0.5).extend(1.0)).truncate());
 
         // szerokość w NDC pomnożona przez połowę okna daje piksele
@@ -548,7 +576,11 @@ mod tests {
         assert!(px.x <= raster as f32 && px.y <= raster as f32);
         eprintln!(
             "[test] 'M': atlas rect={:?} ({}x{} px) offset={:?} em-size={:?} => {px:?} px",
-            g.rect, g.rect.width(), g.rect.height(), g.offset, g.size
+            g.rect,
+            g.rect.width(),
+            g.rect.height(),
+            g.offset,
+            g.size
         );
 
         let size = 32.0f32;
@@ -559,7 +591,10 @@ mod tests {
 
         let glyph = out.first().expect("brak glifu");
         let c = glyph.transform.to_cols_array_2d();
-        eprintln!("[test] quad 'M' w jednostkach świata: x={:?} y={:?} pos={:?}", c[0][0], c[1][1], c[2]);
+        eprintln!(
+            "[test] quad 'M' w jednostkach świata: x={:?} y={:?} pos={:?}",
+            c[0][0], c[1][1], c[2]
+        );
         eprintln!("[test] uv = {:?}", glyph.uv);
         // jednostkowy quad (-0.5..0.5) pomnożony przez macierz daje szerokość
         // równą skali kolumny X; wielkość 'M' to ok. 0.7 em
@@ -593,7 +628,9 @@ mod tests {
             out.len(),
             visible.len()
         );
-        assert!(out.iter().all(|s| s.texture == TextureKey::FontAtlas(HandleId::from(handle))));
+        assert!(out
+            .iter()
+            .all(|s| s.texture == TextureKey::FontAtlas(HandleId::from(handle))));
         assert!(out.iter().all(|s| s.uv.min.x >= 0.0 && s.uv.max.x <= 1.0));
     }
 
@@ -627,9 +664,19 @@ mod tests {
         let mut left = Vec::new();
         registry.layout(&base, Mat3::IDENTITY, &mut left);
         let mut center = Vec::new();
-        registry.layout(&TextDraw { align: TextAlign::Center, ..base.clone() }, Mat3::IDENTITY, &mut center);
+        registry.layout(
+            &TextDraw {
+                align: TextAlign::Center,
+                ..base.clone()
+            },
+            Mat3::IDENTITY,
+            &mut center,
+        );
 
-        assert!((center[0].transform.to_cols_array_2d()[2][0]) < (left[0].transform.to_cols_array_2d()[2][0]));
+        assert!(
+            (center[0].transform.to_cols_array_2d()[2][0])
+                < (left[0].transform.to_cols_array_2d()[2][0])
+        );
     }
 
     #[test]
@@ -642,7 +689,10 @@ mod tests {
         let mut out = Vec::new();
         registry.layout(&text_cmd(handle, "ab\nab"), Mat3::IDENTITY, &mut out);
         assert_eq!(out.len(), 4);
-        assert!((out[2].transform.to_cols_array_2d()[2][1]) < (out[0].transform.to_cols_array_2d()[2][1]));
+        assert!(
+            (out[2].transform.to_cols_array_2d()[2][1])
+                < (out[0].transform.to_cols_array_2d()[2][1])
+        );
     }
 
     #[test]
@@ -652,8 +702,14 @@ mod tests {
         let handle: Handle<FontData> = Handle::new(0, 0);
         registry.load(handle, &data).unwrap();
 
-        let narrow_cmd = TextDraw { max_width: Some(50.0), ..text_cmd(handle, "aaa bbb ccc") };
-        let wide_cmd = TextDraw { max_width: Some(10_000.0), ..text_cmd(handle, "aaa bbb ccc") };
+        let narrow_cmd = TextDraw {
+            max_width: Some(50.0),
+            ..text_cmd(handle, "aaa bbb ccc")
+        };
+        let wide_cmd = TextDraw {
+            max_width: Some(10_000.0),
+            ..text_cmd(handle, "aaa bbb ccc")
+        };
         let mut narrow = Vec::new();
         let mut wide = Vec::new();
         registry.layout(&narrow_cmd, Mat3::IDENTITY, &mut narrow);
@@ -661,7 +717,10 @@ mod tests {
 
         // zawijanie nie usuwa glifów, tylko przesuwa je na kolejne wiersze
         assert_eq!(narrow.len(), wide.len());
-        assert!((narrow.last().unwrap().transform.to_cols_array_2d()[2][1]) < (wide.last().unwrap().transform.to_cols_array_2d()[2][1]));
+        assert!(
+            (narrow.last().unwrap().transform.to_cols_array_2d()[2][1])
+                < (wide.last().unwrap().transform.to_cols_array_2d()[2][1])
+        );
     }
 
     #[test]
@@ -681,7 +740,10 @@ mod tests {
 
         registry.mark_clean(key);
         assert!(!registry.is_dirty(key));
-        assert_eq!(registry.atlas_data(key).unwrap().len(), (ATLAS_SIZE * ATLAS_SIZE) as usize);
+        assert_eq!(
+            registry.atlas_data(key).unwrap().len(),
+            (ATLAS_SIZE * ATLAS_SIZE) as usize
+        );
     }
 
     #[test]
@@ -691,6 +753,9 @@ mod tests {
         let mut out = Vec::new();
         registry.layout(&text_cmd(handle, "abc"), Mat3::IDENTITY, &mut out);
         assert!(out.is_empty());
-        assert_eq!(registry.measure(HandleId::from(handle), "abc", 24.0), Vec2::ZERO);
+        assert_eq!(
+            registry.measure(HandleId::from(handle), "abc", 24.0),
+            Vec2::ZERO
+        );
     }
 }

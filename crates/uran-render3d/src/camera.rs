@@ -75,7 +75,10 @@ impl Camera3d {
     /// Promień z oka w kierunku `dir` (kierunek NIE musi być jednostkowy —
     /// normalizujemy tutaj, więc można podać różnicę `target - position`).
     pub fn ray(&self, dir: Vec3) -> Ray {
-        Ray { origin: self.position, dir: dir.normalize_or_zero() }
+        Ray {
+            origin: self.position,
+            dir: dir.normalize_or_zero(),
+        }
     }
 
     /// Promień przez punkt ekranu w znormalizowanych współrzędnych.
@@ -110,7 +113,10 @@ impl Ray {
 
     /// Promień przesunięty o wektor `offset` (np. o pozycję lufy).
     pub fn shifted(&self, offset: Vec3) -> Ray {
-        Ray { origin: self.origin + offset, dir: self.dir }
+        Ray {
+            origin: self.origin + offset,
+            dir: self.dir,
+        }
     }
 }
 
@@ -148,7 +154,10 @@ mod tests {
     fn centre_ray_matches_forward() {
         let c = Camera3d::default();
         let r = c.ray_through_ndc(0.0, 0.0);
-        assert!(r.dir.dot(c.forward()) > 0.999, "środek ekranu to kierunek patrzenia");
+        assert!(
+            r.dir.dot(c.forward()) > 0.999,
+            "środek ekranu to kierunek patrzenia"
+        );
     }
 
     #[test]
@@ -168,8 +177,15 @@ mod tests {
     fn ray_direction_is_unit_length() {
         // `Ray` NIE normalizuje w konstruktorze — to świadome: wołujący
         // przekazuje już znormalizowany kierunek z kamery.
-        let r = Ray { origin: Vec3::ZERO, dir: Vec3::new(0.0, 0.0, 7.0).normalize() };
+        let r = Ray {
+            origin: Vec3::ZERO,
+            dir: Vec3::new(0.0, 0.0, 7.0).normalize(),
+        };
         let n = r.at(2.0);
-        assert!((n.length() - 2.0).abs() < 1e-5, "punkt {} nie leży 2 od początku", n.length());
+        assert!(
+            (n.length() - 2.0).abs() < 1e-5,
+            "punkt {} nie leży 2 od początku",
+            n.length()
+        );
     }
 }

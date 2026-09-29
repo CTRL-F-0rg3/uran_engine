@@ -20,7 +20,10 @@ pub struct MeshBuilder {
 
 impl MeshBuilder {
     fn new(mesh: Mesh) -> Self {
-        Self { mesh, color: Color::WHITE }
+        Self {
+            mesh,
+            color: Color::WHITE,
+        }
     }
 
     /// Prostokąt (anchor: lewy dolny róg).
@@ -76,7 +79,11 @@ impl MeshBuilder {
     pub fn gradient(mut self, from: Color, to: Color) -> Self {
         let count = self.mesh.vertices.len();
         for (i, vertex) in self.mesh.vertices.iter_mut().enumerate() {
-            let t = if count <= 1 { 0.0 } else { i as f32 / (count - 1) as f32 };
+            let t = if count <= 1 {
+                0.0
+            } else {
+                i as f32 / (count - 1) as f32
+            };
             vertex.color = from.lerp(to, t).to_array();
         }
         self
@@ -106,8 +113,14 @@ impl MeshBuilder {
 
     /// Prostokąt ograniczający siatkę.
     pub fn bounds(&self) -> Rect {
-        let mut iter = self.mesh.vertices.iter().map(|v| Vec2::new(v.position[0], v.position[1]));
-        let Some(first) = iter.next() else { return Rect::ZERO };
+        let mut iter = self
+            .mesh
+            .vertices
+            .iter()
+            .map(|v| Vec2::new(v.position[0], v.position[1]));
+        let Some(first) = iter.next() else {
+            return Rect::ZERO;
+        };
         let mut min = first;
         let mut max = first;
         for p in iter {
@@ -146,7 +159,10 @@ mod tests {
         let mesh = MeshBuilder::quad(Rect::from_xywh(0.0, 0.0, 4.0, 4.0))
             .color(Color::RED)
             .build();
-        assert!(mesh.vertices.iter().all(|v| v.color == Color::RED.to_array()));
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|v| v.color == Color::RED.to_array()));
     }
 
     #[test]
@@ -170,7 +186,9 @@ mod tests {
     #[test]
     fn rotation_preserves_size() {
         let rect = Rect::from_xywh(0.0, 0.0, 10.0, 20.0);
-        let mesh = MeshBuilder::quad(rect).rotated(std::f32::consts::FRAC_PI_4).build();
+        let mesh = MeshBuilder::quad(rect)
+            .rotated(std::f32::consts::FRAC_PI_4)
+            .build();
         let bounds = MeshBuilder::from_mesh(mesh.clone()).bounds();
         // środek zostaje na miejscu...
         assert!((bounds.center() - rect.center()).length() < 1e-4);

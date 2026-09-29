@@ -33,7 +33,11 @@ impl GpuTexture {
     ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Uran Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1, // bez mipmap — w 2D rzadko się przydają, a kosztują pamięć
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -57,7 +61,11 @@ impl GpuTexture {
                 bytes_per_row: Some(width * block),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -65,14 +73,22 @@ impl GpuTexture {
             label: Some("Uran Texture BindGroup"),
             layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
             ],
         });
-        Self { view, bind_group, size: (width, height), format }
+        Self {
+            view,
+            bind_group,
+            size: (width, height),
+            format,
+        }
     }
 
     fn from_image(
@@ -270,4 +286,3 @@ impl TextureRegistry {
         self.uploaded_this_frame = 0;
     }
 }
-
