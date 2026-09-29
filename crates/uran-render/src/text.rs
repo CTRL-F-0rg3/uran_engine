@@ -406,7 +406,7 @@ impl FontRegistry {
             for c in cmd.text.chars().take(end).skip(start) {
                 let id = entry.font.glyph_id(c);
                 let kern = entry.font.kern_unscaled(previous, id);
-                pen += (entry.font.h_advance_unscaled(id) + kern) * world_per_unit;
+                let advance = (entry.font.h_advance_unscaled(id) + kern) * world_per_unit;
 
                 if c != ' ' {
                     if let Some(glyph) = entry.rasterize(id) {
@@ -443,6 +443,16 @@ impl FontRegistry {
                         }
                     }
                 }
+                // UWAGA: posuw PRZESUWAMY DOPIERO PO narysowaniu glifu.
+                //
+                // `pen` to pozycja, w której stoi BIEŻĄCY glif — tak jak
+                // `pen` w `measure` i w fazie układania. Robienie `pen +=`
+                // przed rysowaniem przesuwało każdą literę o jej własny
+                // advance, więc pierwsza litera leciała o `advance` za daleko
+                // i litery nachodziły na siebie ("Dzien" => "Dżen", nachodzące
+                // na siebie "z" i "D"), a tekst z biegiem czasu rozjeżdżał się
+                // coraz bardziej.
+                pen += advance;
                 previous = id;
             }
         }
@@ -550,6 +560,88 @@ mod tests {
                 ratio * 100.0
             );
         }
+    }
+
+    #[test]
+    fn glyphs_start_at_pen_and_follow_advances() {
+        // Regresja: posuw `pen` musi wskazywac pozycje BIEZACEGO glifu.
+        //
+        // Wczesniej `pen += advance` szlo PRZED rysowaniem, wiec kazda litera
+        // ladowala o swoj wlasny advance za daleko: pierwsza litera tekstu
+        // zaczynala sie zamiast w `shift`, a kolejne nakladaly sie na siebie
+        // ("Dzien" wygladalo jak "Dzen" z plamiastymi literami).
+        //
+        // Sprawdzamy to niezaleznie od czcionki, na SAMEJ metryce fontu:
+        //   * lewa krawedz pierwszego glifu == jego `offset.x`,
+        //   * odleglosc miedzy sasiednimi glifami == `advance` poprzedniego,
+        //   * ostatni glif konczy sie wylacznie przed `measure()`.
+        let Some(data) = system_font() else { return };
+        let handle: Handle<FontData> = Handle::new(0, 0);
+        let mut registry = FontRegistry::new();
+        registry.load(handle, &data).unwrap();
+
+        let text = "Dzien 1";
+        let size = 15.0f32;
+        let mut out = Vec::new();
+        let mut cmd = text_cmd(handle, text);
+        cmd.size = size;
+        registry.layout(&cmd, Mat3::IDENTITY, &mut out);
+        assert!(!out.is_empty(), "layout nie wyprodukowal glifow");
+
+        // Lewa krawedz i szerokosc kazdego quada w jednostkach swiata.
+        let edges: Vec<(f32, f32)> = out
+            .iter()
+            .map(|s| {
+                let c = s.transform.to_cols_array_2d();
+                let w = c[0][0].abs();
+                (c[2][0] - w * 0.5, c[2][0] + w * 0.5)
+            })
+            .collect();
+
+        // 1) pierwszy glif zaczyna sie w `shift` (= 0 dla Left), a NIE
+        //    o jeden advance dalej.
+        let first_offset = {
+            let e = registry.fonts[0].as_mut().unwrap();
+            let g = e.rasterize(e.font.glyph_id('D')).unwrap();
+            g.offset.x * size
+        };
+        assert!(
+            (edges[0].0 - first_offset).abs() < 0.01,
+            "pierwszy glif zaczyna sie w {:.3}, oczekiwano {:.3} (offset.x * size)",
+            edges[0].0,
+            first_offset
+        );
+
+        // 2) sasiednie glify NIE zachodza na siebie: kazda prawa krawedz
+        //    lezy w najwyzej na lewej krawedzi nastepnego (+ tolerancja na
+        //    kerning i na kolidujace bounding boxy w bitmape).
+        for w in edges.windows(2) {
+            assert!(
+                w[0].1 <= w[1].0 + 0.5,
+                "glify nachodza na siebie: prawa krawedz {:.3} > lewa nastepnego {:.3}",
+                w[0].1,
+                w[1].0
+            );
+        }
+
+        // 3) ostatni glif konczy sie w `measure()` — calkowita szerokosc
+        //    tekstu zgadza sie z suma posuwow (tu `shift` = 0).
+        let measured = registry.measure(HandleId::from(handle), text, size).x;
+        let last = *edges.last().unwrap();
+        assert!(
+            last.1 <= measured + 0.5,
+            "tekst wider niz `measure()`: koniec {:.3} > {:.3}",
+            last.1,
+            measured
+        );
+        // `measure` liczy posuwy w jednostkach fontu przeliczonych przez
+        // `size / upem` — sprawdzamy, ze ta szerokosc jest wogole sensowna
+        // (kiedys `pen` byl liczony w surowych jednostkach fontu i tekst
+        // rozjeżdżal sie o czynnik `upem`).
+        assert!(
+            (10.0..400.0).contains(&measured),
+            "`measure` zwrocilo bledna szerokosc {measured} dla rozmiaru {size}"
+        );
     }
 
     #[test]

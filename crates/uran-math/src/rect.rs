@@ -140,6 +140,24 @@ impl Rect {
         let overlap_y = (self.max.y.min(other.max.y) - self.min.y.max(other.min.y)).max(0.0);
         Vec2::new(overlap_x, overlap_y)
     }
+
+    /// Prostokąt przeskalowany o czynnik `factor` względem początku (0, 0).
+    ///
+    /// Przydatne przy rysowaniu z powiększeniem: widok kamery dzielimy przez
+    /// skalę, żeby dostać prostokąt w jednostkach świata, zanim nałożymy
+    /// transformację powiększenia.
+    pub fn scaled(self, factor: f32) -> Self {
+        Self::new(self.min * factor, self.max * factor)
+    }
+}
+
+impl std::ops::Div<f32> for Rect {
+    type Output = Rect;
+
+    /// Dzieli oba rogi przez `factor` (skalowanie względem początku).
+    fn div(self, rhs: f32) -> Self::Output {
+        self.scaled(1.0 / rhs)
+    }
 }
 
 #[cfg(test)]

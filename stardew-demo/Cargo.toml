@@ -1,0 +1,16 @@
+[package]
+name = "stardew-demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "stardew-demo"
+path = "src/main.rs"
+
+[dependencies]
+uran-engine.workspace = true
+uran-render.workspace = true
+uran-tilemap.workspace = true
+uran-math.workspace = true
+uran-asset.workspace = true
+

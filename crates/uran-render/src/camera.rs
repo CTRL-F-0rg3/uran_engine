@@ -98,6 +98,34 @@ impl Camera2d {
         projection * view
     }
 
+    /// Przyciąga kamerę do prostokąta świata, żeby nie pokazywać pustki
+    /// poza mapą.
+    ///
+    /// Gdy świat jest **większy** od widoku, kamera zatrzymuje się na
+    /// krawędziach — i to jest normalny przypadek w grze. Gdy świat jest
+    /// **mniejszy** niż widok (mała mapa albo mocne powiększenie), nie da się
+    /// dopasować krawędzi, więc środkujemy mapę i zostawiamy margines dookoła.
+    ///
+    /// Dzięki temu po ostatnim kaflu nie widać „czarnego" tła, a mała mapa
+    /// nie ucieka do rogu ekranu.
+    pub fn clamp_to_bounds(&mut self, world: Rect, window_size: Vec2) {
+        if world.is_empty() {
+            return;
+        }
+        let visible = self.visible_size(window_size);
+        // Oś, na której świat mieści się w widoku, dostaje środek zamiast
+        // przycięcia — inaczej `clamp` zadziałałby w drugą stronę.
+        let axis = |center: f32, half_visible: f32, min: f32, max: f32| {
+            if half_visible * 2.0 >= max - min {
+                (min + max) * 0.5
+            } else {
+                center.clamp(min + half_visible, max - half_visible)
+            }
+        };
+        self.position.x = axis(self.position.x, visible.x * 0.5, world.min.x, world.max.x);
+        self.position.y = axis(self.position.y, visible.y * 0.5, world.min.y, world.max.y);
+    }
+
     /// Wygładzone podążanie za punktem (ważne dla kamery w grze).
     ///
     /// `smoothness` to tempo dochodzenia do celu; większa wartość = szybciej.
@@ -294,5 +322,59 @@ mod tests {
             (camera.position.x - 100.0).abs() < 0.01,
             "kamera nie dogoniła celu"
         );
+    }
+
+    /// Świat mniejszy od okna (jak farma 640x480 przy oknie 1280x720):
+    /// krawędzi nie da się dopasować, więc mapa ma być na środku.
+    #[test]
+    fn clamp_centers_world_smaller_than_view() {
+        let mut camera = Camera2d::at(-500.0, 900.0);
+        let world = Rect::from_xywh(0.0, 0.0, 640.0, 480.0);
+        camera.clamp_to_bounds(world, Vec2::new(1280.0, 720.0));
+        assert_eq!(camera.position, world.center());
+    }
+
+    /// Świat większy od okna: kamera zatrzymuje się na krawędzi, więc po
+    /// ostatnim kaflu nie widać pustki.
+    #[test]
+    fn clamp_stops_at_big_world_edges() {
+        let mut camera = Camera2d::at(5000.0, -4000.0);
+        let world = Rect::from_xywh(0.0, 0.0, 4000.0, 3000.0);
+        let window = Vec2::new(800.0, 600.0);
+        camera.clamp_to_bounds(world, window);
+        // Widok 800x600 przy zoom 1 -> środek nie może wyjść poza
+        // 400 od prawej i 300 od dolnej krawędzi.
+        assert!(
+            (camera.position.x - 3600.0).abs() < 1e-3,
+            "{}",
+            camera.position.x
+        );
+        assert!(
+            (camera.position.y - 300.0).abs() < 1e-3,
+            "{}",
+            camera.position.y
+        );
+
+        let view = camera.visible_rect(window);
+        assert!(view.min.x >= world.min.x - 1e-3 && view.max.x <= world.max.x + 1e-3);
+        assert!(view.min.y >= world.min.y - 1e-3 && view.max.y <= world.max.y + 1e-3);
+    }
+
+    /// Środek mapy przy dużym świecie ma zostać tam, gdzie był.
+    #[test]
+    fn clamp_keeps_center_inside_big_world() {
+        let mut camera = Camera2d::at(1234.0, 2345.0);
+        let world = Rect::from_xywh(0.0, 0.0, 4000.0, 3000.0);
+        camera.clamp_to_bounds(world, Vec2::new(800.0, 600.0));
+        assert!((camera.position.x - 1234.0).abs() < 1e-3);
+        assert!((camera.position.y - 2345.0).abs() < 1e-3);
+    }
+
+    /// Pusty świat nie może zepsuć kamery (brak prostokąta = brak clampu).
+    #[test]
+    fn clamp_ignores_empty_world() {
+        let mut camera = Camera2d::at(10.0, 20.0);
+        camera.clamp_to_bounds(Rect::ZERO, Vec2::new(800.0, 600.0));
+        assert_eq!(camera.position, Vec2::new(10.0, 20.0));
     }
 }

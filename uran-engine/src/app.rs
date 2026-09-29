@@ -25,7 +25,7 @@ use crate::context::{Ctx, SystemFn, WindowState, DEFAULT_ASSET_DIR};
 /// ```
 pub struct App {
     descriptor: WindowDescriptor,
-    asset_dir: String,
+    asset_dir: std::path::PathBuf,
     /// Świat ECS dostępny przed uruchomieniem (np. do wczytania gry).
     pub world: World,
     systems: Vec<SystemFn>,
@@ -47,7 +47,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             descriptor: windowed(1280, 720),
-            asset_dir: DEFAULT_ASSET_DIR.to_string(),
+            asset_dir: std::path::PathBuf::from(DEFAULT_ASSET_DIR),
             world: World::new(),
             systems: Vec::new(),
             startup_systems: Vec::new(),
@@ -82,7 +82,11 @@ impl App {
     }
 
     /// Katalog z assetami (domyślnie `assets/`).
-    pub fn assets(mut self, path: impl Into<String>) -> Self {
+    ///
+    /// Przyjmuje też `PathBuf` z
+    /// [`find_asset_dir`](uran_asset::find_asset_dir) — wtedy `cargo run -p gra`
+    /// działa z dowolnego katalogu roboczego.
+    pub fn assets(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.asset_dir = path.into();
         self
     }
@@ -128,7 +132,7 @@ impl App {
         let clear_color = self.descriptor.clear_color;
         let mut state = AppState {
             descriptor: self.descriptor,
-            assets: AssetServer::new(&self.asset_dir),
+            assets: AssetServer::auto_root(&self.asset_dir),
             world: self.world,
             systems: self.systems,
             startup_systems: self.startup_systems,

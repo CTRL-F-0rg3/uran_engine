@@ -86,6 +86,32 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Wczytuje mapę z pliku XML razem z arkuszami kafli.
+    ///
+    /// Ścieżka jest relatywna do katalogu assetów (`assets/`), więc
+    /// `load_tilemap("maps/farm.xml")` szuka `assets/maps/farm.xml`.
+    /// Błąd nie wywraca gry — zwraca `None` i wypisuje komunikat, bo
+    /// brak pliku z mapą to błąd zawartości, nie powód do paniki.
+    pub fn load_tilemap(&mut self, path: &str) -> Option<uran_tilemap::TileMap> {
+        match uran_tilemap::xml::load_map(path, self.assets) {
+            Ok(map) => {
+                println!(
+                    "🗺  mapa `{}`: {}x{} kafli, {} warstw, {} arkuszy",
+                    map.name,
+                    map.width(),
+                    map.height(),
+                    map.layers.len(),
+                    map.tilesets.len()
+                );
+                Some(map)
+            }
+            Err(e) => {
+                eprintln!("⚠️  nie udało się wczytać mapy `{path}`: {e}");
+                None
+            }
+        }
+    }
+
     /// Delta czasu w sekundach — skrót najczęstszej operacji w grze.
     pub fn dt(&self) -> f32 {
         self.time.delta_seconds()
