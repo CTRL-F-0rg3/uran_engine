@@ -6,12 +6,12 @@
 
 use uran_math::{Mat4, Vec3};
 use uran_render::{Scene3d, Scene3dTarget};
-use wgpu::util::DeviceExt;
 
 use crate::camera::Camera3d;
 use crate::material::{MaterialBank, MaterialId};
 use crate::mesh::{GpuMesh, InstanceModel, Mesh, SceneUniform};
 use crate::postfx::PostFx;
+use crate::shadow::{SceneBounds, ShadowMap, ShadowSettings};
 
 /// Identyfikator siatki w rejestrze renderera.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,9 +127,25 @@ pub struct Renderer3d {
     postfx: PostFx,
 
     pipeline: wgpu::RenderPipeline,
+    /// Pipeline passu cieni: ten sam shader, inny punkt wejścia
+    /// (`vs_shadow`) i brak fragment shadera. Rysuje wyłącznie
+    /// głębokość do mapy cieni.
+    shadow_pipeline: wgpu::RenderPipeline,
     meshes: Vec<GpuMesh>,
     /// Materiały PBR i ich bind grupy (bind group 1 w potoku).
     pub materials: MaterialBank,
+
+    /// Mapa cieni kierunkowych (tekstura głębokości + próbnik porównawczy).
+    pub shadow: ShadowMap,
+    /// Layout bind grupy samego passu cieni.
+    ///
+    /// OSOBNY layout, bo wgpu zabrania wiązania zasobu, który w tym
+    /// samym passie jest celem renderowania. Gdybyśmy użyli tu tej
+    /// samej grupy co w passie głównym, mapa cieni byłaby jednocześnie
+    /// źródłem i celem — walidacja odrzuci pass.
+    shadow_bind_layout: wgpu::BindGroupLayout,
+    /// Bind grupy passu cieni: uniform sceny + tablica modeli.
+    shadow_bind_group: wgpu::BindGroup,
 
     camera: Camera3d,
     lighting: Lighting,
@@ -181,10 +197,82 @@ impl Renderer3d {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    // mapę cieni czyta shader FRAGMENT
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        // `Depth` wymusza `texture_depth_2d` w WGSL, co
+                        // jest warunkiem użycia `textureSampleCompare`.
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // `Comparison` daje `sampler_comparison` w WGSL.
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
             ],
         });
 
-        let bind_group = make_bind_group(&device, &layout, &scene_buffer, &models_buffer);
+        // Mapa cieni musi istnieć PRZED bind grupą: binding 2 w grupie 0
+        // wskazuje na jej widok, a binding 3 na jej próbnik.
+        let shadow = ShadowMap::new(&device, ShadowSettings::default());
+
+        let bind_group = make_bind_group(
+            &device,
+            &layout,
+            &scene_buffer,
+            &models_buffer,
+            Some(shadow.view()),
+            Some(shadow.sampler()),
+        );
+
+        // Layout passu cieni: TYLKO uniform sceny i tablica modeli.
+        // Świadomie bez mapy cieni — w trakcie tego passu jest ona
+        // celem renderowania, a wgpu odrzuca zasób użyty w jednym
+        // passie jako źródło i jako attachment.
+        let shadow_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Uran 3D Shadow BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        // Layout passu cienia deklaruje TYLKO bindingi 0 i 1, wiec
+        // przekazujemy `None`/`None` — `create_bind_group` wymaga
+        // dokladnie tylu wpisow, ile jest w layoutcie.
+        let shadow_bind_group = make_bind_group(
+            &device,
+            &shadow_bind_layout,
+            &scene_buffer,
+            &models_buffer,
+            None,
+            None,
+        );
 
         // Materialy PBR: layout z grupy 1. Bank tworzymy tu, bo
         // `pipeline_layout` musi znać jego layout, a sam bank potrzebuje
@@ -275,6 +363,89 @@ impl Renderer3d {
             multiview: None,
         });
 
+        // --- pipeline passu cieni ---
+        //
+        // Różni się od głównego w trzech miejscach:
+        //   1. entry point `vs_shadow` zamiast `vs_main`,
+        //   2. `fragment: None` — brak color attachmentu,
+        //   3. inny layout bind grup (tylko uniform + modele).
+        //
+        // Układ wierzchołków MUSI być identyczny z głównym potokiem:
+        // oba czytają ten sam `GpuMesh` z tym samym buforem, a layout
+        // bufora jest częścią kontraktu z potokiem.
+        let shadow_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Uran 3D Shadow Pipeline Layout"),
+            bind_group_layouts: &[&shadow_bind_layout],
+            push_constant_ranges: &[],
+        });
+
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Uran 3D Shadow Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_shadow",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<crate::mesh::Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 12,
+                            shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x2,
+                            offset: 24,
+                            shader_location: 3,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 32,
+                            shader_location: 2,
+                        },
+                    ],
+                }],
+            },
+            // `None` = brak stage'u fragmentowego. Wymagane przez
+            // specyfikację, gdy nie ma color attachmentu.
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                // Culling musi być TAKIE SAME jak w głównym potoku.
+                // Różnica dałaby cienie „od tyłu" dla obiektów, których
+                // ściany są jednorodne — np. płoty i ściany stodoła.
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                // Depth bias na poziomie potoku: zależny od nachylenia
+                // powierzchni, więc działa tam, gdzie statyczny bias
+                // w shaderze nie wystarcza (skośne dachy, pochyłe ściany).
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            // 1: pass cienia nie używa MSAA — rysujemy samą głębokość.
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
         let (w, h) = gpu.size();
         Self {
             format,
@@ -288,8 +459,12 @@ impl Renderer3d {
             models_bind_layout: layout,
             postfx: PostFx::new(device, format, samples),
             pipeline,
+            shadow_pipeline,
             meshes: Vec::new(),
             materials,
+            shadow,
+            shadow_bind_layout,
+            shadow_bind_group,
             camera: Camera3d::default(),
             lighting: Lighting::default(),
             clear_color: [0.45, 0.55, 0.68, 1.0],
@@ -407,7 +582,45 @@ impl Renderer3d {
             &self.models_bind_layout,
             &self.scene_buffer,
             &self.models_buffer,
+            Some(self.shadow.view()),
+            Some(self.shadow.sampler()),
         );
+        // Pass cienia ma OSOBNĄ bind grupę wskazującą na tę samą tablicę
+        // modeli — inaczej po powiększeniu bufora rysowałby z dziurą.
+        self.shadow_bind_group = make_bind_group(
+            device,
+            &self.shadow_bind_layout,
+            &self.scene_buffer,
+            &self.models_buffer,
+            None,
+            None,
+        );
+    }
+
+    /// AABB sceny liczone z macierzy modeli wszystkich komend.
+    ///
+    /// Bierzemy osiem narożników jednostkowego sześcianu (-1..1) i
+    /// przekształcamy je każdą macierzą. `GpuMesh` NIE trzyma już
+    /// geometrii na CPU (`upload` zostawia ją tylko na karcie), więc
+    /// AABB liczymy z transformacji, a nie z wierzchołków.
+    ///
+    /// Jednostkowy sześcian zamiast bryły modelu daje **nadmiarowy**
+    /// kadr: dopasowany do sześcianu, a nie do rzeczywistej bryły.
+    /// To kosztuje rozdzielczość cienia (większy kadr na tę samą mapę),
+    /// ale jest bezpieczne — nigdy nie wytniemy obiektu.
+    fn bounds_from_cache(&self) -> SceneBounds {
+        let mut b = SceneBounds::empty();
+        for cmd in &self.commands {
+            for i in 0..8 {
+                let corner = Vec3::new(
+                    if i & 1 == 0 { -1.0 } else { 1.0 },
+                    if i & 2 == 0 { -1.0 } else { 1.0 },
+                    if i & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                b.expand(cmd.model.transform_point3(corner));
+            }
+        }
+        b
     }
 
     /// Renderuje scenę: czyści kolor i głębokość, rysuje wszystkie obiekty.
@@ -436,8 +649,15 @@ impl Renderer3d {
             self.camera.set_aspect(w as f32 / h as f32);
         }
 
-        // uniform sceny: macierz, oko, światło
+        // Kadr cienia dobieramy do AABB CAŁEJ sceny (liczy go
+        // `bounds_from_cache`). Bez tego obiekty poza kadrem nie
+        // rzucałyby cienia wcale — wygląda to jak wycięcie budynku.
+        let bounds = self.bounds_from_cache();
+        self.shadow.fit(bounds, self.lighting.light_dir);
+
         let c = self.lighting.ambient;
+        let s = &self.shadow.settings;
+        let shadow_on = if s.enabled { 1.0 } else { 0.0 };
         let uniform = SceneUniform {
             view_proj: self.camera.view_proj().to_cols_array_2d(),
             eye: [
@@ -461,6 +681,9 @@ impl Renderer3d {
                 self.lighting.intensity,
             ],
             ambient_time: [c[0], c[1], c[2], self.time],
+            light_view_proj: self.shadow.light_view_proj().to_cols_array_2d(),
+            shadow_params: [s.depth_bias, s.normal_offset, s.strength, s.radius],
+            shadow_map_info: [self.shadow.texel_uv(), shadow_on, 0.0, 0.0],
         };
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
         // tablica modeli: jeden wpis na obiekt
@@ -484,6 +707,44 @@ impl Renderer3d {
         // post-processing: cel HDR i tekstury zależne od rozmiaru okna
         self.postfx.ensure_size(device, w, h);
         self.postfx.upload_params(queue, w, h, self.time);
+
+        // --- pass cieni: sama głębokość z pozycji słońca ---
+        //
+        // Musi być PRZED passem głównym, bo shader sceny czyta tę mapę.
+        // Bind grupy jest OSOBNA (bez mapy cieni), bo wgpu nie pozwala
+        // w tym samym passie czytać zasobu, który jest jego celem.
+        if self.shadow.settings.enabled {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Uran 3D Shadow Pass"),
+                // Pusty kolor: `color_attachments` musi być pustą listą,
+                // nie listą z `None` — pass bez color attachmentu.
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.shadow.view(),
+                    // 1.0 = „nic nie blokuje" — dalej od słońca znaczy
+                    // większa głębokość, więc 1 to maksimum.
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.shadow_bind_group, &[]);
+
+            // Ten sam bufor modeli co w passie głównym, więc indeks
+            // instancji (`base_instance`) musi się zgadzać: `instance_index`
+            // w WGSL liczy od 1, bo `first_instance` to i+1.
+            for (i, cmd) in self.commands.iter().enumerate() {
+                let Some(mesh) = self.meshes.get(cmd.mesh.0 as usize) else {
+                    continue;
+                };
+                mesh.draw(&mut pass, 0, i as u32 + 1);
+            }
+        }
 
         {
             // klonujemy widok głębokości, żeby pożyczka `&mut pass` nie
@@ -562,26 +823,47 @@ fn create_models_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer 
     })
 }
 
-/// Bind grupa: uniform sceny (0) + tablica modeli (1).
+/// Bind grupa grupy 0: uniform sceny (0) + tablica modeli (1) +
+/// mapa cieni (2) + próbnik porównawczy (3).
+///
+/// Budujemy ją z **nazwy** layoutu zamiast z pozycji wpisów, bo
+/// `create_bind_group` wymaga tylu wpisów, ile jest w layoutcie. Layout
+/// passu cienia ma tylko 2, więc przekazanie pustego `TextureView`
+/// w `Option` pozwala obsłużyć oba przypadki jedną funkcją.
 fn make_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     scene: &wgpu::Buffer,
     models: &wgpu::Buffer,
+    shadow_tex: Option<&wgpu::TextureView>,
+    shadow_samp: Option<&wgpu::Sampler>,
 ) -> wgpu::BindGroup {
+    let mut entries = vec![
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: scene.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 1,
+            resource: models.as_entire_binding(),
+        },
+    ];
+    // Dodajemy 2 i 3 TYLKO gdy layout je deklaruje. Wpisania pustego
+    // `Option` do bind grupy wgpu odrzuci z „binding not found".
+    if let (Some(tex), Some(samp)) = (shadow_tex, shadow_samp) {
+        entries.push(wgpu::BindGroupEntry {
+            binding: 2,
+            resource: wgpu::BindingResource::TextureView(tex),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 3,
+            resource: wgpu::BindingResource::Sampler(samp),
+        });
+    }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Uran 3D Bind Group"),
         layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scene.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: models.as_entire_binding(),
-            },
-        ],
+        entries: &entries,
     })
 }
 

@@ -8,13 +8,21 @@
 struct Scene {
     // Uważaj na wyrównanie w WGSL: samo `vec3<f32>` zajmuje 12 B, ale
     // następna zmienna musi zaczynać się od wielokrotności 16.
-    // Dlatego WSZĘDZIE są `vec4`: 64 + 4 * 16 = 128 B.
-    view_proj: mat4x4<f32>,   // 64 B
-    eye: vec4<f32>,           // xyz = pozycja oka, w = nieużywane
-    light_dir: vec4<f32>,     // xyz = kierunek światła, w = nieużywane
-    light_color: vec4<f32>,   // rgb = kolor światła, a = intensywność
+    // Dlatego WSZĘDZIE są `vec4`: 208 B łącznie z macierzą cienia.
+    view_proj: mat4x4<f32>,     // 64 B
+    eye: vec4<f32>,             // xyz = pozycja oka, w = nieużywane
+    light_dir: vec4<f32>,       // xyz = kierunek światła, w = nieużywane
+    light_color: vec4<f32>,     // rgb = kolor światła, a = intensywność
     // rgb = ambient, a = czas świata
     ambient_time: vec4<f32>,
+    // --- mapowanie cieni ---
+    // Świat -> NDC tekstury cieni (kamera słońca, ortograficzna)
+    light_view_proj: mat4x4<f32>,   // 64 B
+    // x = bias głębokości, y = odsunięcie wzdłuż normalnej,
+    // z = siła cienia, w = promień PCF w texelach
+    shadow_params: vec4<f32>,
+    // x = rozmiar texela w UV, y = włącznik (0/1)
+    shadow_map_info: vec4<f32>,
 }
 
 struct Model {
@@ -34,6 +42,13 @@ struct Material {
 
 @group(0) @binding(0) var<uniform> scene: Scene;
 @group(0) @binding(1) var<storage, read> models: array<Model>;
+// --- mapa cieni ---
+// `texture_depth_2d` + `sampler_comparison` to para wymagana przez
+// `textureSampleCompare`. Zwykły `texture_2d<f32>` nie przyjmie
+// porównania, a `sampler` (nie porównawczy) zwróciłby wartość
+// zinterpretowaną jako kolor.
+@group(0) @binding(2) var shadow_tex: texture_depth_2d;
+@group(0) @binding(3) var shadow_samp: sampler_comparison;
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(1) @binding(1) var normal_tex: texture_2d<f32>;
 @group(1) @binding(2) var orm_tex: texture_2d<f32>;
@@ -78,6 +93,71 @@ fn vs_main(
     let t = (m.model * vec4<f32>(1.0, 0.0, 0.0, 0.0)).xyz;
     out.tangent = t;
     return out;
+}
+
+/// Vertex shader passu cienia.
+///
+/// Zwraca TYLKO pozycję w przestrzeni kamery słońca. Nie ma tu
+/// interpolatorów poza `position` — pass nie ma color attachmentu,
+/// więc fragment shader w ogóle nie istnieje i GPU zapamiętuje
+/// wyłącznie głębokość.
+@vertex
+fn vs_shadow(
+    @location(0) position: vec3<f32>,
+    @builtin(instance_index) inst: u32,
+) -> @builtin(position) vec4<f32> {
+    let m = models[inst - 1u];
+    return scene.light_view_proj * m.model * vec4<f32>(position, 1.0);
+}
+
+/// PCF 3×3: 9 porównań głębokości uśrednionych ze sobą.
+///
+/// Jeden odczyt daje twardą, „poszlakowaną" krawędź cienia — widoczną
+/// przy ruchu kamery jako drganie. Uśrednienie 9 sąsiadów daje gradient
+/// szerokości rzędu jednego texela, co wygląda jak miękki pen.
+///
+/// `bias` odejmujemy od głębokości fragmentu (im bliżej słońca, tym
+/// mniejsza głębokość), więc próbka „widzi" obiekt jako minimalnie
+/// bliższy i nie dostaje fałszywego cienia na samej sobie.
+fn shadow_factor(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
+    // `normal_offset` przesuwa próbkę od powierzchni wzdłuż normalnej.
+    // Działa lepiej niż sam depth-bias przy powierzchniach skośnych
+    // do kierunku światła, bo zależy od geometrii, a nie od głębokości.
+    let offset_pos = world_pos + N * scene.shadow_params.y;
+    let lp = scene.light_view_proj * vec4<f32>(offset_pos, 1.0);
+
+    // `w` = 1 dla projekcji ortograficznej, ale dzielimy przez nie
+    // świadomie: ten sam kod obsłużyłby perspektywę bez zmian.
+    let ndc = lp.xyz / lp.w;
+    // NDC -> UV: oś Y odwrócona, bo w NDC rośnie w górę, a na
+    // teksturze w dół. Bez tej negacji cień lądowałby pionowo.
+    let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+
+    // Poza mapą nie ma sensu zgadywać. Kadr dobieramy do całej sceny
+    // (patrz `light_matrix`), więc to zdarza się tylko dla obiektów
+    // wystających poza AABB — dla nich zwracamy PEŁNE oświetlenie.
+    let in_range = all(uv > vec2<f32>(0.0)) && all(uv < vec2<f32>(1.0))
+        && ndc.z >= 0.0 && ndc.z <= 1.0;
+    if (!in_range) {
+        return 1.0;
+    }
+
+    let bias = scene.shadow_params.x;
+    // Krok PCF w jednostkach UV. `radius` podany w texelach mnożymy
+    // przez rozmiar texela, żeby wynik nie zależał od rozdzielczości.
+    let texel = scene.shadow_map_info.x;
+    let step = scene.shadow_params.w * texel;
+    let ref_depth = ndc.z - bias;
+
+    // 9 próbek w siatce 3×3 wokół środka.
+    var sum = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            let off = vec2<f32>(f32(x), f32(y)) * step;
+            sum = sum + textureSampleCompare(shadow_tex, shadow_samp, uv + off, ref_depth);
+        }
+    }
+    return sum / 9.0;
 }
 
 @fragment
@@ -162,7 +242,32 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let diffuse = kd * albedo / 3.14159265;
 
     let sun = srgb_to_linear(scene.light_color.rgb) * scene.light_color.a;
-    let direct = (diffuse + specular) * sun * ndotl;
+    // UWAGA: WGSL nie ma `mut` dla `let` — zmienne sa z natury
+    // mutowalne, a `mut` jest zarezerwowanym slowem kluczowym
+    // (uzywanym np. w `fn`/`struct`). Dlatego zamiast modyfikowac
+    // `direct` w miejscu, liczymy cien i przypisujemy wynik raz.
+    let direct_unshadowed = (diffuse + specular) * sun * ndotl;
+
+    // --- cień: przyciemniamy TYLKO światło bezpośrednie
+    //
+    // Światło otoczenia zostaje nietknięte — inaczej cień na trawie
+    // byłby czarny, a w lesie prawie niewidoczny (otoczenie w lesie
+    // jest silniejsze niż na otwartym polu). Dopiero `mix` daje
+    // sensowne cienie: w cieniu widać błękit nieba i rozproszone
+    // światło, dokładnie tak jak w rzeczywistości.
+    //
+    // `shadow_map_info.y` to włącznik. Gdy cienie są wyłączone, skip
+    // całej próbki — nie tylko mnożenia, bo samo `textureSampleCompare`
+    // kosztuje tyle, co kilkanaście ALU.
+    var direct = direct_unshadowed;
+    if (scene.shadow_map_info.y > 0.5) {
+        let lit = shadow_factor(in.world_pos, N);
+        // `strength` pozwala mieć cienie mocne albo ledwo widoczne
+        // bez zmiany mapy — przydatne, gdy słońce jest nisko i cień
+        // musi być miękki, żeby nie dominował nad sceną.
+        let shadow = mix(1.0, lit, scene.shadow_params.z);
+        direct = direct_unshadowed * shadow;
+    }
 
     // --- otoczenie: hemisfera z nieba u góry i odbiciem ziemi
     let sky = srgb_to_linear(scene.ambient_time.rgb);

@@ -1,7 +1,12 @@
 //! Geometria 3D: wierzchołki po stronie CPU i ich kopia na GPU.
 
 use bytemuck::{Pod, Zeroable};
-use uran_math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
+// `Vec4` uzywaja wylacznie testy (przeksztalcanie punktow przez
+// macierz), wiec trzymamy go pod `cfg(test)` — bez tego kompilacja
+// produkcyjna zglasza nieuzywany import.
+use uran_math::{Mat3, Mat4, Quat, Vec2, Vec3};
+#[cfg(test)]
+use uran_math::Vec4;
 use wgpu::util::DeviceExt;
 
 /// Wierzchołek siatki: pozycja, normalna, UV, kolor.
@@ -189,10 +194,26 @@ impl GpuMesh {
 
 /// Uniform przekazywany do shadera 3D w jednej klatce.
 ///
-/// UKŁAD MUSI BYĆ ZGODNY Z `Scene` W `s3d.wgsl`: macierz + cztery `vec4`
-/// = 64 + 4 * 16 = **128 B**. Wszystkie pola trzymamy w `vec4` także po
-/// stronie Rusta, bo WGSL wyrównuje `vec3` do 16 B i struktura z samymi
-/// `vec3` urosłaby do 160 B — walidacja wgpu odrzuciłaby wtedy bufor.
+/// UKŁAD MUSI BYĆ ZGODNY Z `Scene` W `s3d.wgsl`. Wszystkie pola
+/// trzymamy w `vec4` także po stronie Rusta, bo WGSL wyrównuje `vec3`
+/// do 16 B — struktura z samymi `vec3` urosłaby i walidacja wgpu
+/// odrzuciłaby bufor.
+///
+/// ## Rozmiar: 224 B
+///
+/// Liczymy pole po polu, bo to jednocześnie kontrakt z shaderem
+/// i asercja kompilacji:
+///
+/// | pole | rozmiar |
+/// |------|---------|
+/// | `view_proj` | 4·`vec4` = 64 B |
+/// | `eye`, `light_dir`, `light_color`, `ambient_time` | 4·16 = 64 B |
+/// | `light_view_proj` | 4·`vec4` = 64 B |
+/// | `shadow_params`, `shadow_map_info` | 2·16 = 32 B |
+/// | **suma** | **224 B** |
+///
+/// Wszystko jest 16-bajtowo wyrównane, więc `size % 16 == 0` i wgpu
+/// nie zgłosi błędu wyrównania.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct SceneUniform {
@@ -206,11 +227,24 @@ pub struct SceneUniform {
     pub light_color: [f32; 4],
     /// `rgb` = ambient, `a` = czas świata.
     pub ambient_time: [f32; 4],
+
+    /// --- mapowanie cieni ---
+    ///
+    /// Świat -> NDC tekstury cieni. Osobna macierz, bo kamera cienia
+    /// stoi w zupełnie innym miejscu niż oko gracza: patrzy z pozycji
+    /// słońca, ortograficznie, na całą scenę.
+    pub light_view_proj: [[f32; 4]; 4],
+    /// `x` = bias w głębokości, `y` = odsunięcie wzdłuż normalnej,
+    /// `z` = siła cienia, `w` = promień PCF (w texelach).
+    pub shadow_params: [f32; 4],
+    /// `x` = rozmiar texela w UV, `y` = włącznik (0/1),
+    /// `z`,`w` = wyrównanie na 16 B.
+    pub shadow_map_info: [f32; 4],
 }
 
 /// Rozmiar uniformu jest częścią kontraktu z shaderem: zmiana jednego bez
 /// drugiego kończy się błędem walidacji wgpu dopiero podczas renderowania.
-const _: () = assert!(std::mem::size_of::<SceneUniform>() == 128);
+const _: () = assert!(std::mem::size_of::<SceneUniform>() == 224);
 
 /// Transformacja i kolor jednego obiektu w scenie.
 ///

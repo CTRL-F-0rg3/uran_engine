@@ -3,4 +3,14 @@ name = "farm-simulator"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "farm-simulator"
+path = "src/main.rs"
+
 [dependencies]
+uran-engine.workspace = true
+uran-render.workspace = true
+uran-render3d.workspace = true
+uran-math.workspace = true
+glam.workspace = true
+wgpu.workspace = true

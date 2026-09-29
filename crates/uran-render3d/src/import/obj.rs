@@ -373,17 +373,31 @@ fn build(scene: ObjScene, lib: &MaterialLib, up: AxisUp) -> ImportedModel {
     let mut order: Vec<usize> = (0..scene.objects.len()).collect();
     order.retain(|&o| scene.tri_object.contains(&o));
 
+    // Czesci grupujemy po PARZE (obiekcie, materiale), a nie tylko po
+    // obiekcie. Pliki z Blendera trzymaja w jednym obiekcie kilka
+    // `usemtl` — np. `Barn_Cube.005` ma DarkRed, White, LightRed i
+    // RoofBlack. Grupowanie tylko po `o` dawalo caly budynek w kolorze
+    // PIERWSZEGO materialu: czerwony dach, kremowe sciany i czarne
+    // okna splynaly w jeden kolor. Po jednej czesci na (obiek, material)
+    // kazda sciana dostaje swoj wlasny material.
+    let mut order: Vec<(usize, String)> = Vec::new();
+    for ti in 0..scene.triangles.len() {
+        if !scene.tri_object.contains(&scene.tri_object[ti]) {
+            continue;
+        }
+        let key = (scene.tri_object[ti], scene.tri_material[ti].clone());
+        if !order.contains(&key) {
+            order.push(key);
+        }
+    }
+
     let mut parts = Vec::with_capacity(order.len());
-    for obj in order {
+    for (obj, part_material) in order {
         let mut mesh = Mesh::new();
-        let mut part_material = String::new();
 
         for (ti, tri) in scene.triangles.iter().enumerate() {
-            if scene.tri_object[ti] != obj {
+            if scene.tri_object[ti] != obj || scene.tri_material[ti] != part_material {
                 continue;
-            }
-            if part_material.is_empty() {
-                part_material = scene.tri_material[ti].clone();
             }
             let material = lib.get(&scene.tri_material[ti]);
             // Normalna z geometrii — awaryjnie, gdy plik nie ma `vn`.
@@ -662,6 +676,93 @@ vt 0 1
 usemtl skin
 f 1/1/1 2/2/1 3/3/1 4/4/1
 ";
+
+    /// Jeden obiekt z kilkoma `usemtl` musi dac kilka czesci.
+    ///
+    /// Pliki z Blendera trzymaja w jednym obiekcie wiele materialow
+    /// (dach, sciany, okna). Grupowanie tylko po `o` dalo caly budynek
+    /// w kolorze PIERWSZEGO materialu — czerwone sciany, kremowe
+    /// okna i czarne drzwi splynaly w jeden kolor.
+    #[test]
+    fn one_object_with_several_materials_splits_into_parts() {
+        let obj = "\
+# test
+o house
+v 0 0 0
+v 1 0 0
+v 0 1 0
+usemtl wall
+f 1 2 3
+usemtl roof
+f 1 2 3
+usemtl window
+f 1 2 3
+";
+        let scene = parse_obj(obj).unwrap();
+        let lib = MaterialLib::default();
+        let model = build(scene, &lib, AxisUp::Y);
+        let names: Vec<&str> = model
+            .parts
+            .iter()
+            .map(|p| p.material.name.as_str())
+            .collect();
+        assert_eq!(
+            model.parts.len(),
+            3,
+            "trzy `usemtl` w jednym obiekcie daly {} czesci: {names:?}",
+            model.parts.len()
+        );
+        assert!(names.contains(&"wall"), "brak materialu wall: {names:?}");
+        assert!(names.contains(&"roof"), "brak materialu roof: {names:?}");
+        assert!(names.contains(&"window"), "brak materialu window: {names:?}");
+    }
+
+    /// Kazda czesc nosi wlasny kolor materialu, a nie kolor pierwszego.
+    ///
+    /// Budujemy biblioteke przez `parse` (jedyne publiczne wejscie),
+    /// a nie przez pole wewnetrzne, ktore jest prywatne.
+    #[test]
+    fn each_part_uses_its_own_material_colour() {
+        let mtl = "\
+newmtl red
+Kd 1.000000 0.000000 0.000000
+d 1.0
+newmtl white
+Kd 1.000000 1.000000 1.000000
+d 1.0
+";
+        let lib = MaterialLib::parse(mtl, std::path::Path::new("."));
+        assert!(lib.contains("red") && lib.contains("white"));
+
+        let obj = "\
+o house
+v 0 0 0
+v 1 0 0
+v 0 1 0
+usemtl red
+f 1 2 3
+usemtl white
+f 1 2 3
+";
+        let scene = parse_obj(obj).unwrap();
+        let model = build(scene, &lib, AxisUp::Y);
+        assert_eq!(model.parts.len(), 2, "dwa usemtl = dwie czesci");
+
+        // Szukamy czesci po KOLORZE, nie po pozycji w liscie: kolejnosc
+        // czesci wynika z kolejnosci trjokatow w pliku, wiec nie jest
+        // gwarantowana przez API.
+        let reds = model
+            .parts
+            .iter()
+            .filter(|p| p.material.albedo[0] > 0.9 && p.material.albedo[1] < 0.1)
+            .count();
+        let whites = model
+            .parts
+            .iter()
+            .filter(|p| p.material.albedo[0] > 0.9 && p.material.albedo[1] > 0.9)
+            .count();
+        assert_eq!((reds, whites), (1, 1), "kolory materialow sie nie rozdzielily");
+    }
 
     #[test]
     fn parses_cube_with_quads_and_uvs() {

@@ -430,6 +430,14 @@ dependencies = [
 [[package]]
 name = "farm-simulator"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "uran-engine",
+ "uran-math",
+ "uran-render",
+ "uran-render3d",
+ "wgpu",
+]
 
 [[package]]
 name = "fdeflate"
