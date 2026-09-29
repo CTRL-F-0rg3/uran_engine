@@ -48,6 +48,12 @@ struct FontEntry {
     pen_x: u32,
     /// Wysokość zajętych półek.
     shelf_y: u32,
+    /// Największa wysokość glifu na BIEŻĄCEJ półce.
+    ///
+    /// Bez tego nowa półka zaczynałaby się zbyt wysoko (lub zbyt nisko,
+    /// jeśli przesuwamy ją o wysokość pojedynczego glifu) i glify z
+    /// różnych półek nachodziłyby na siebie.
+    shelf_height: u32,
     /// Rasteryzowany rozmiar w pikselach.
     raster_size: u32,
     /// Czy atlas zmienił się od ostatniego wgrania na GPU.
@@ -69,6 +75,7 @@ impl FontEntry {
             pixels: vec![0; (ATLAS_SIZE * ATLAS_SIZE) as usize],
             pen_x: 0,
             shelf_y: 0,
+            shelf_height: 0,
             raster_size,
             dirty: true,
             glyphs: HashMap::new(),
@@ -81,26 +88,37 @@ impl FontEntry {
         self.pixels.fill(0);
         self.pen_x = 0;
         self.shelf_y = 0;
+        self.shelf_height = 0;
         self.glyphs.clear();
         self.resets += 1;
         self.dirty = true;
     }
 
-    /// Rezerwuje prostokąt w atlasie; `None` = brak miejsca nawet po resecie.
+    /// Rezerwuje prostokąt w atlasie; `None` = brak miejsca.
+    ///
+    /// UWAGA na `shelf_height`: nowa półka zaczyna się PO
+    /// `shelf_y + shelf_height`, a NIE po `shelf_y + h`. Glify mają różne
+    /// wysokości (kropka 2 px, „W" 20 px) i przesuwanie półki o wysokość
+    /// pojedynczego glifu kładło niski znak NA bitmapach wyżej położonych
+    /// liter. Sąsiadujące glify nachodziły na siebie i w HUD-zie „o"
+    /// wyglądało jak „q".
     fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         if w + ATLAS_PADDING > ATLAS_SIZE || h + ATLAS_PADDING > ATLAS_SIZE {
             return None;
         }
         if self.pen_x + w + ATLAS_PADDING > ATLAS_SIZE {
-            // nowa półka
+            // zamykamy bieżącą półkę i zaczynamy nową na jej wysokości
+            self.shelf_y += self.shelf_height + ATLAS_PADDING;
             self.pen_x = 0;
-            self.shelf_y += h + ATLAS_PADDING;
+            self.shelf_height = 0;
         }
         if self.shelf_y + h + ATLAS_PADDING > ATLAS_SIZE {
-            self.reset_atlas();
+            // brak miejsca — wywołujący zdecyduje, czy zrobić reset
+            return None;
         }
         let at = (self.pen_x, self.shelf_y);
         self.pen_x += w + ATLAS_PADDING;
+        self.shelf_height = self.shelf_height.max(h);
         self.dirty = true;
         Some(at)
     }

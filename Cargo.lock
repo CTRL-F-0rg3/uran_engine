@@ -1976,6 +1976,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "uran-render3d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "uran-math",
+ "uran-render",
+ "wgpu",
+]
+
+[[package]]
+name = "uran-tanks"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "uran-engine",
+ "uran-math",
+ "uran-render",
+ "uran-render3d",
+ "wgpu",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

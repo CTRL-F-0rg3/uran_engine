@@ -1,0 +1,11 @@
+[package]
+name = "uran-render3d"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uran-render.workspace = true
+uran-math.workspace = true
+glam.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true

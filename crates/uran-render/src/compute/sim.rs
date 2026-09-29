@@ -20,11 +20,8 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use wgpu::util::DeviceExt;
-
 use super::unit::{GpuUnit, SimParams, SimStats, UnitFlags};
 use crate::backend::device::GpuContext;
-use crate::batch::Globals;
 
 /// Ile jednostek mieści się w jednej komórce siatki.
 ///

@@ -88,6 +88,11 @@ pub struct Renderer {
     mesh_ttl: u64,
     /// Symulacja jednostek na GPU (pozycje nigdy nie wracają na CPU).
     sim: Option<GpuSim>,
+    /// Scena 3D rysowana przed passem 2D (patrz `scene3d`).
+    ///
+    /// Obiekt należy do gry — tu trzymamy tylko `Box<dyn Scene3d>`,
+    /// żeby nie wymuszać zależności `uran-render -> uran-render3d`.
+    scene3d: Option<Box<dyn crate::scene3d::Scene3d>>,
     /// Zgłoszenie zrzutu ekranu (patrz `Renderer::request_screenshot`).
     screenshot: Option<ScreenshotRequest>,
     /// Czy atlas czcionki został już zrzucony do pliku (URAN_DUMP_ATLAS).
@@ -189,6 +194,7 @@ impl Renderer {
             frame_index: 0,
             mesh_ttl: 600,
             sim: None,
+            scene3d: None,
             screenshot: None,
             atlas_dumped: false,
             stats: FrameStats::default(),
@@ -226,6 +232,48 @@ impl Renderer {
     /// Kolejka GPU (do jednorazowego wgrywania buforów symulacji).
     pub fn queue(&self) -> &wgpu::Queue {
         &self.gpu.queue
+    }
+
+    /// Kontekst GPU — z niego renderer 3D (`uran-render3d`) bierze
+    /// `Device` i `Queue`, żeby nie tworzyć drugiego urządzenia.
+    ///
+    /// Dwa `Device` na jedno okno to dwa niezależne stany wgpu: osobne
+    /// bufory nie widzą się nawzajem i nie ma jak współdzielić powierzchni.
+    pub fn gpu(&self) -> &crate::backend::device::GpuContext {
+        &self.gpu
+    }
+
+    /// Format powierzchni — potok 3D musi się zgadzać z 2D, inaczej
+    /// `RenderPassColorAttachment` zostanie odrzucony przez walidację.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.pipelines.format
+    }
+
+    /// Ile próbek na piksel (1 = bez MSAA). Renderer 3D musi użyć tej
+    /// samej wartości w depth bufferze, co 2D w załączniku koloru.
+    pub fn samples(&self) -> u32 {
+        self.pipelines.samples
+    }
+
+    /// Podpina scenę 3D rysowaną przed passem 2D.
+    ///
+    /// Scena należy do gry (tu trafia tylko `Box`), dzięki czemu
+    /// `uran-render` nie zależy od `uran-render3d`.
+    pub fn set_scene3d(&mut self, scene: Box<dyn crate::scene3d::Scene3d>) {
+        let (w, h) = self.size();
+        let mut scene = scene;
+        scene.resize(w, h);
+        self.scene3d = Some(scene);
+    }
+
+    /// Zdejmuje scenę 3D (zwraca do gry, np. przy zmianie poziomu).
+    pub fn take_scene3d(&mut self) -> Option<Box<dyn crate::scene3d::Scene3d>> {
+        self.scene3d.take()
+    }
+
+    /// Czy podpięto scenę 3D.
+    pub fn has_scene3d(&self) -> bool {
+        self.scene3d.is_some()
     }
 
     /// Wskrzesza jednostki w zakresie indeksów, stawiając je w `at`.
@@ -267,6 +315,12 @@ impl Renderer {
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         self.gpu.resize(size);
         self.msaa_texture = None; // trzeba odtworzyć w nowym rozmiarze
+        let (w, h) = self.size();
+        if let Some(scene) = &mut self.scene3d {
+            // scena 3D trzyma własny depth buffer — musi go odtworzyć,
+            // bo rozmiar bufora głębokości jest zapisany na sztywno
+            scene.resize(w, h);
+        }
     }
 
     /// Czy podany prostokąt świata widać (odrzucanie pracy poza ekranem).
@@ -562,6 +616,24 @@ impl Renderer {
             ..Default::default()
         };
 
+        // --- scena 3D: OSOBNY render pass, własny depth buffer ----------
+        // Idzie PRZED passem 2D i czyści kolor + głębokość. 2D dostaje potem
+        // `LoadOp::Load`, więc farma trafia na wierzech świata 3D (HUD,
+        // celownik, panele), a nie pod niego. Gdy 3D nie ma, 2D czyści sam.
+        let scene3d_active = self.scene3d.as_ref().is_some_and(|s| s.is_active());
+        if scene3d_active {
+            let target = crate::scene3d::Scene3dTarget {
+                color: attachment,
+                resolve,
+                format: self.pipelines.format,
+                samples: self.pipelines.samples,
+                gpu: &self.gpu,
+            };
+            if let Some(scene) = self.scene3d.as_mut() {
+                scene.draw(&target);
+            }
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Uran Render Pass"),
@@ -569,12 +641,18 @@ impl Renderer {
                     view: attachment,
                     resolve_target: resolve,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear.r as f64,
-                            g: clear.g as f64,
-                            b: clear.b as f64,
-                            a: clear.a as f64,
-                        }),
+                        // 3D zdążyło już wyrysować kadr — nie wolno go
+                        // wyczyścić, bo zniknęłaby cała scena.
+                        load: if scene3d_active {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: clear.r as f64,
+                                g: clear.g as f64,
+                                b: clear.b as f64,
+                                a: clear.a as f64,
+                            })
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
