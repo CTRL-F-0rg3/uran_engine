@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/*", "farm-simulator", "junak-rider",
+    "boss-fight",
     "uran-engine",   # <-- Zmienione z "engine"
     "uran-game",     # <-- Zmienione z "game"
     "uran-tanks",    # FPS z czołgami (renderer 3D)

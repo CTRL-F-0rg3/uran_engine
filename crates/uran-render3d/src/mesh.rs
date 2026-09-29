@@ -4,9 +4,9 @@ use bytemuck::{Pod, Zeroable};
 // `Vec4` uzywaja wylacznie testy (przeksztalcanie punktow przez
 // macierz), wiec trzymamy go pod `cfg(test)` — bez tego kompilacja
 // produkcyjna zglasza nieuzywany import.
-use uran_math::{Mat3, Mat4, Quat, Vec2, Vec3};
 #[cfg(test)]
 use uran_math::Vec4;
+use uran_math::{Mat3, Mat4, Quat, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
 /// Wierzchołek siatki: pozycja, normalna, UV, kolor.

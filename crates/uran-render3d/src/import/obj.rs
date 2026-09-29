@@ -714,7 +714,10 @@ f 1 2 3
         );
         assert!(names.contains(&"wall"), "brak materialu wall: {names:?}");
         assert!(names.contains(&"roof"), "brak materialu roof: {names:?}");
-        assert!(names.contains(&"window"), "brak materialu window: {names:?}");
+        assert!(
+            names.contains(&"window"),
+            "brak materialu window: {names:?}"
+        );
     }
 
     /// Kazda czesc nosi wlasny kolor materialu, a nie kolor pierwszego.
@@ -761,7 +764,11 @@ f 1 2 3
             .iter()
             .filter(|p| p.material.albedo[0] > 0.9 && p.material.albedo[1] > 0.9)
             .count();
-        assert_eq!((reds, whites), (1, 1), "kolory materialow sie nie rozdzielily");
+        assert_eq!(
+            (reds, whites),
+            (1, 1),
+            "kolory materialow sie nie rozdzielily"
+        );
     }
 
     #[test]
@@ -1023,9 +1030,14 @@ f 1 2 3
                 bad += 1;
             }
         }
-        assert!(polys.len() > 1000, "przeanalizowano za mało: {}", polys.len());
+        assert!(
+            polys.len() > 1000,
+            "przeanalizowano za mało: {}",
+            polys.len()
+        );
         assert_eq!(
-            bad, 0,
+            bad,
+            0,
             "{bad} z {} ścian ma wiatrak przeciwny do normalnych pliku \
              (min cos = {min_cos})",
             polys.len()

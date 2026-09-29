@@ -232,7 +232,13 @@ pub fn player() -> Mesh {
     let mut m = Mesh::new();
     // Nogi: dwa krótkie słupki.
     for sx in [-0.13f32, 0.13] {
-        pyramid(&mut m, [sx - 0.09, -0.10], [sx + 0.09, 0.10], 0.75, palette::PANTS);
+        pyramid(
+            &mut m,
+            [sx - 0.09, -0.10],
+            [sx + 0.09, 0.10],
+            0.75,
+            palette::PANTS,
+        );
     }
     // Tors.
     pyramid(&mut m, [-0.19, -0.13], [0.19, 0.13], 1.30, palette::SHIRT);
@@ -240,6 +246,108 @@ pub fn player() -> Mesh {
     // głowa z daszkiem, a nie jak sześcian.
     pyramid(&mut m, [-0.15, -0.13], [0.15, 0.13], 1.62, palette::SKIN);
     m
+}
+
+/// Kolor drutu kolidatora — jaskrawy pomarańcz, celowo kontrastujący
+/// z zielenią pola, żeby bryły były rozpoznawalne na tle.
+pub const COLLIDER: [f32; 3] = [1.0, 0.45, 0.05];
+
+/// Kolor sześcianu gracza — chłodny błękit, żeby odróżnić go od
+/// przeszkód (pomarańcz) jednym rzutem oka.
+pub const PLAYER_BOX: [f32; 3] = [0.25, 0.75, 1.0];
+
+/// Grube krawędzie prostopadłościana — bryła `collide::Box` widoczna
+/// jako drunek.
+///
+/// Rysujemy **krawędzie** (12 prostych), nie ściany: ściany by były
+/// półprzezroczyste, wymagały sortowania i zasłaniałyby świat.
+/// Drunek nie przeszkadza patrzeć i jest czytelny z każdego kąta.
+///
+/// Grubość to nie prawdziwa szerokość linii — po prostu mały kwadrat
+/// wokół każdej krawędzi, bo rasteryzator nie zna linii. `t` dobrane
+/// tak, żeby 2 cm było widoczne z kilku metrów, a nie zasłaniało
+/// sceny.
+pub fn collider_box(center: Vec3, half: Vec3, color: [f32; 3], t: f32) -> Mesh {
+    // Osiem narożników, w stałej kolejności bitów (x,y,z):
+    // indeks to bit0=x, bit1=y, bit2=z; minus = 0, plus = 1.
+    let mut c = [Vec3::ZERO; 8];
+    for (i, p) in c.iter_mut().enumerate() {
+        let s = |b: u32| if i & (1 << b) != 0 { 1.0 } else { -1.0 };
+        *p = Vec3::new(
+            center.x + s(0) * half.x,
+            center.y + s(1) * half.y,
+            center.z + s(2) * half.z,
+        );
+    }
+    // Dwanaście krawędzi: pary narożników różniące się **jednym**
+    // bitem. To kompletna lista — jej pominięcie albo duplikat to
+    // najczęstszy błąd przy ręcznym rysowaniu prostopadłościanu.
+    const EDGES: [(usize, usize); 12] = [
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7),
+        (0, 2),
+        (1, 3),
+        (4, 6),
+        (5, 7),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ];
+    let mut m = Mesh::new();
+    for (a, b) in EDGES {
+        bar(&mut m, c[a], c[b], t, color);
+    }
+    m
+}
+
+/// Kwadratowy pręt między dwoma punktami — jeden odcinek drutu.
+fn bar(m: &mut Mesh, a: Vec3, b: Vec3, t: f32, color: [f32; 3]) {
+    let d = (b - a).normalize();
+    // Dwa wektory prostopadłe do osi pręta. Wybieramy dowolny wektor
+    // nie równoległy do `d` i krzyżujemy — unikamy w ten sposób
+    // przypadku degeneracji przy osi X/Y/Z.
+    let helper = if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let u = d.cross(helper).normalize() * t;
+    let v = d.cross(u).normalize() * t;
+    // Cztery ściany kwadratu wokół osi.
+    let corners = [a - u - v, a + u - v, a + u + v, a - u + v];
+    for i in 0..4 {
+        let p0 = corners[i];
+        let p1 = corners[(i + 1) % 4];
+        // Normalna ściany: na zewnątrz pręta, liczona z osi.
+        let n = (p0 + p1) * 0.5 - (a + b) * 0.5;
+        let n = if n.length_squared() > 1e-12 {
+            n.normalize()
+        } else {
+            u
+        };
+        m.tri(
+            Vertex::new(p0, n, color),
+            Vertex::new(p1, n, color),
+            Vertex::new(b, n, color),
+        );
+        m.tri(
+            Vertex::new(p0, n, color),
+            Vertex::new(b, n, color),
+            Vertex::new(a, n, color),
+        );
+    }
+    // Końce kwadratu — bez nich pręt byłby otwarty i przy pewnych
+    // kątach patrzenia znikałyby jego krawędzie.
+    for &p in &[a, b] {
+        for i in 0..4 {
+            let p0 = corners[i];
+            let p1 = corners[(i + 1) % 4];
+            m.tri(
+                Vertex::new(p0, d, color),
+                Vertex::new(p1, d, color),
+                Vertex::new(p, d, color),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -326,13 +434,49 @@ mod tests {
     #[test]
     fn player_is_about_two_metres_tall() {
         let p = player();
-        let top = p
-            .vertices
-            .iter()
-            .map(|v| v.pos().y)
-            .fold(0.0f32, f32::max);
+        let top = p.vertices.iter().map(|v| v.pos().y).fold(0.0f32, f32::max);
         // Postać ma być wyższa niż pęd, niższa niż budynek.
         assert!(top > 1.4 && top < 2.0, "postać ma {top} m");
         assert!(p.is_closed());
+    }
+
+    #[test]
+    fn collider_box_has_no_vertices_inside_the_box() {
+        // Kubit o boku 2 m. Wierzchołek drutu **wewnątrz** bryły
+        // oznaczałby, że krawędzie są przesunięte.
+        let m = collider_box(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), COLLIDER, 0.02);
+        assert!(!m.vertices.is_empty());
+        for v in &m.vertices {
+            let p = v.pos();
+            let inside = p.x.abs() < 0.9 && p.y.abs() < 0.9 && p.z.abs() < 0.9;
+            assert!(!inside, "wierzchołek drutu jest w środku bryły: {p:?}");
+        }
+    }
+
+    #[test]
+    fn collider_box_normals_are_valid() {
+        // Zerowa normalna to NaN w WGSL = czarny piksel.
+        for half in [
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(0.15, 0.55, 6.5),
+            Vec3::new(3.8, 4.5, 3.8),
+        ] {
+            for v in &collider_box(Vec3::ZERO, half, COLLIDER, 0.02).vertices {
+                assert!(v.normal().length() > 0.5, "zerowa normalna");
+                assert!(v.pos().is_finite(), "NaN w dracie");
+            }
+        }
+    }
+
+    #[test]
+    fn collider_box_is_denser_for_a_bigger_box() {
+        // Płot (wąski i niski) musi mieć mniej geometrii niż stodoło.
+        let small = collider_box(Vec3::ZERO, Vec3::new(0.15, 0.55, 6.5), COLLIDER, 0.02);
+        let big = collider_box(Vec3::ZERO, Vec3::new(3.8, 4.5, 3.8), COLLIDER, 0.02);
+        assert_eq!(
+            small.vertices.len(),
+            big.vertices.len(),
+            "liczba wierzchołków nie zależy od rozmiaru bryły"
+        );
     }
 }

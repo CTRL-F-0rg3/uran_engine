@@ -14,6 +14,20 @@ pub struct WindowDescriptor {
     pub samples: u32,
     /// Kursor systemowy nad oknem.
     pub cursor_visible: bool,
+    /// Kursor zablokowany w centrum okna (styl FPS).
+    ///
+    /// W pierwszej osobie mysz steruje kamerą, a nie wskazuje, więc
+    /// kursor musi zniknąć z ekranu **i** zostać złapany przez
+    /// system — inaczej gracz goni go do rogów okna. Domyślnie
+    /// wyłączone, bo tryb klawiaturowy (np. edytor tekstu) nie może
+    /// złapać kursora.
+    pub cursor_locked: bool,
+    /// Okno od razu na pełnym ekranie.
+    ///
+    /// `None` = okno, `Some` = pełny ekran na monitorze, na którym
+    /// się otworzyło. Domyślnie wyłączone, żeby nie przeszkadzać
+    /// pracy nad kodem.
+    pub fullscreen: bool,
 }
 
 impl Default for WindowDescriptor {
@@ -27,6 +41,8 @@ impl Default for WindowDescriptor {
             vsync: true,
             samples: 1,
             cursor_visible: true,
+            cursor_locked: false,
+            fullscreen: false,
         }
     }
 }
@@ -80,6 +96,22 @@ impl WindowDescriptor {
         self.cursor_visible = visible;
         self
     }
+
+    /// Blokuje kursor w centrum okna (`CursorGrabMode::Locked`).
+    ///
+    /// Osobno od [`Self::cursor_visible`], bo to dwie różne rzeczy:
+    /// widoczność kursora to dekorator, a blokada to zmiana trybu
+    /// pracy myszy. Zwykle ustawia się obie naraz.
+    pub fn cursor_locked(mut self, locked: bool) -> Self {
+        self.cursor_locked = locked;
+        self
+    }
+
+    /// Uruchamia grę na pełnym ekranie.
+    pub fn fullscreen(mut self, fullscreen: bool) -> Self {
+        self.fullscreen = fullscreen;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -99,13 +131,28 @@ mod tests {
             .background(0xFF0000)
             .samples(4)
             .vsync(false)
-            .cursor_visible(false);
+            .cursor_visible(false)
+            .cursor_locked(true)
+            .fullscreen(true);
         assert_eq!(custom.title, "Test");
         assert!(!custom.resizable);
         assert_eq!(custom.clear_color, Color::RED);
         assert_eq!(custom.samples, 4);
         assert!(!custom.vsync);
         assert!(!custom.cursor_visible);
+        assert!(custom.cursor_locked);
+        assert!(custom.fullscreen);
+    }
+
+    /// Domyślnie kursor NIE jest blokowany ani pełny ekran nie jest
+    /// włączony — inaczej uruchomienie silnika do testów albo do
+    /// edycji kodu przejmowałoby kursor i schodziło z monitora.
+    #[test]
+    fn cursor_and_fullscreen_are_opt_in() {
+        let d = WindowDescriptor::default();
+        assert!(d.cursor_visible, "kursor domyślnie widoczny");
+        assert!(!d.cursor_locked, "kursor nie łapany bez pytania");
+        assert!(!d.fullscreen, "gra nie startuje na pełnym ekranie");
     }
 
     #[test]

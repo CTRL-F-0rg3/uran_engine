@@ -223,7 +223,6 @@ impl Farm {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,7 +306,10 @@ mod tests {
         let b = tile_center(FIELD_W - 1, FIELD_D - 1);
         assert!(a.x < 0.0 && a.z < 0.0, "lewy górny róg to (-,-): {a:?}");
         assert!(b.x > 0.0 && b.z > 0.0, "prawy dolny to (+,+): {b:?}");
-        assert!((a.x.abs() - b.x.abs()).abs() < 1e-5, "pole nie jest symetryczne");
+        assert!(
+            (a.x.abs() - b.x.abs()).abs() < 1e-5,
+            "pole nie jest symetryczne"
+        );
     }
 
     #[test]

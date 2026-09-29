@@ -42,9 +42,9 @@
 
 // `Vec4` uzywa wylacznie modul testow (wektor jednorodny punktu),
 // wiec importujemy go tylko przy `cargo test`.
-use uran_math::{Mat4, Vec3};
 #[cfg(test)]
 use uran_math::Vec4;
+use uran_math::{Mat4, Vec3};
 
 /// Rozdzielczość mapy cieni w pikselach na krawędź.
 ///
@@ -238,7 +238,6 @@ impl ShadowMap {
         self.light_view_proj = light_matrix(bounds, light_dir);
     }
 }
-
 
 /// Buduje macierz projekcji cienia dla kierunku `light_dir`.
 ///

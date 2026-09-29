@@ -30,6 +30,26 @@ pub struct Input {
 
     mouse_position: Vec2,
     mouse_previous: Vec2,
+    /// Ruch myszy zgłoszony przez system przy **zablokowanym** kursorze.
+    ///
+    /// `CursorMoved` mówi tylko, *gdzie* jest kursor. Przy blokadzie
+    /// kursor stoi w centrum okna i nie zmiera pozycji, więc
+    /// `mouse_position - mouse_previous` zawsze wynosi ZERO i
+    /// obrót kamery zamiera. System raportuje wtedy ruch względny
+    /// (`DeviceEvent::MouseMotion`), który nie ma pozycji — dlatego
+    /// trzymamy go osobno i sumujemy co klatkę.
+    ///
+    /// Właśnie dlatego blokada kursora psuła sterowanie: winit nie
+    /// wysyła `DeviceEvent::MouseMotion` sam z siebie do
+    /// `ApplicationHandler` jako `WindowEvent`, więc trzeba go
+    /// obsłużyć osobno w `device_event` (patrz `App`).
+    raw_motion: Vec2,
+    /// Czy kursor został już zlokalizowany przynajmniej raz.
+    ///
+    /// Bez tego pierwsze zdarzenie `CursorMoved` po starcie dawałoby
+    /// deltę równą pozycji kursora (skok z (0,0) na środek okna) —
+    /// patrz [`Input::set_mouse_position`].
+    mouse_seen: bool,
     scroll_delta: Vec2,
     cursor_inside: bool,
     modifiers: ModifiersState,
@@ -99,7 +119,26 @@ impl Input {
     }
 
     /// Przesuwa kursor (w pikselach okna).
+    ///
+    /// Pierwsze zdarzenie po otwarciu okna **nie** generuje delty.
+    /// Kursor startuje w (0,0), a system raportuje od razu jego
+    /// pozycję w środku okna — bez tego zabezpieczenia
+    /// [`Input::mouse_delta`] zwróciłby jednorazowy „ruch" o pół
+    /// ekranu i obrót kamery przeskoczyłby o ~90°. Limit
+    /// `MAX_MOUSE_DELTA` tego nie łapie, bo 640 px mieści się
+    /// w limicie 200 px dopiero po przeskalowaniu, a przeskok jest
+    /// pojedynczy i zbyt duży, by uznać go za ruch użytkownika.
+    ///
+    /// Dlatego pierwszą pozycję zapamiętujemy jako poprzednią i zwracamy
+    /// zerową deltę; kolejne zdarzenia już liczą się normalnie.
     pub fn set_mouse_position(&mut self, x: f32, y: f32) {
+        if !self.mouse_seen {
+            // Pierwsza pozycja to punkt odniesienia, nie ruch.
+            self.mouse_seen = true;
+            self.mouse_position = Vec2::new(x, y);
+            self.mouse_previous = self.mouse_position;
+            return;
+        }
         self.mouse_previous = self.mouse_position;
         self.mouse_position = Vec2::new(x, y);
     }
@@ -109,6 +148,25 @@ impl Input {
         self.scroll_delta += Vec2::new(x, y);
     }
 
+    /// Dodaje ruch względny myszy (z `DeviceEvent::MouseMotion`).
+    ///
+    /// Używane przy zablokowanym kursorze, gdzie pozycja w oknie
+    /// stoi w miejscu i nie nadaje się do liczenia delty. Ruch
+    /// **sumujemy**, bo zdarzeń bywa wiele na klatkę — wtedy mysz
+    /// szybciej by się obracała niż przy jednym zdarzeniu na klatkę.
+    pub fn add_raw_motion(&mut self, x: f32, y: f32) {
+        self.raw_motion += Vec2::new(x, y);
+    }
+
+    /// Wyzerowuje zgromadzony ruch względny.
+    ///
+    /// Wywoływane w [`Input::end_frame`] — inaczej ruch z całej sesji
+    /// sumowałby się w nieskończoność i kamera skoczyłaby raz, a potem
+    /// już nigdy by nie reagowała.
+    pub fn clear_raw_motion(&mut self) {
+        self.raw_motion = Vec2::ZERO;
+    }
+
     /// Wywoływane raz na klatkę, po wszystkich systemach.
     pub fn end_frame(&mut self) {
         self.keys_pressed.clear();
@@ -116,6 +174,7 @@ impl Input {
         self.buttons_pressed.clear();
         self.buttons_released.clear();
         self.scroll_delta = Vec2::ZERO;
+        self.raw_motion = Vec2::ZERO;
     }
 
     // --- Klawiatura ---
@@ -169,9 +228,25 @@ impl Input {
 
     /// Ruch myszy od poprzedniej pozycji, limitowany, żeby skok po refocus
     /// nie „teleportował" kamery.
+    ///
+    /// Przy **zablokowanym** kursorze pozycja w oknie nie zmienia się,
+    /// więc liczenie z `mouse_position` dawałoby wieczne ZERO i kamera
+    /// stałaby nieruchomo. Dlatego jeśli system podał ruch względny
+    /// (`DeviceEvent::MouseMotion`), bierzemy właśnie jego — on jest
+    /// jedynym źródłem obrotu kamery w trybie blokady.
+    ///
+    /// Fallback na pozycję zostaje dla trybu bez blokady oraz na
+    /// platformach, które nie dają ruchu względnego.
     pub fn mouse_delta(&self) -> Vec2 {
-        (self.mouse_position - self.mouse_previous)
-            .clamp(Vec2::splat(-MAX_MOUSE_DELTA), Vec2::splat(MAX_MOUSE_DELTA))
+        let limit = Vec2::splat(MAX_MOUSE_DELTA);
+        if self.raw_motion != Vec2::ZERO {
+            // Ruch względny sumujemy z pozycją: przy blokadzie pozycja
+            // stoi, ale gdyby ją ktoś jednak poruszył, nie wolno
+            // zgubić ani jednego ze źródeł.
+            (self.raw_motion + (self.mouse_position - self.mouse_previous)).clamp(-limit, limit)
+        } else {
+            (self.mouse_position - self.mouse_previous).clamp(-limit, limit)
+        }
     }
 
     /// Delta kółka myszy w „liniach" (dodatnie Y = przewinięcie w górę).
@@ -264,8 +339,9 @@ mod tests {
         let mut input = Input::new();
         input.set_mouse_position(100.0, 50.0);
         assert_eq!(input.mouse_position(), Vec2::new(100.0, 50.0));
-        // pierwszy ruch liczymy od (0,0)
-        assert_eq!(input.mouse_delta(), Vec2::new(100.0, 50.0));
+        // Pierwsza pozycja to punkt odniesienia, nie ruch — patrz
+        // `first_mouse_position_is_not_treated_as_movement`.
+        assert_eq!(input.mouse_delta(), Vec2::ZERO);
 
         input.set_mouse_position(110.0, 50.0);
         assert_eq!(input.mouse_delta(), Vec2::new(10.0, 0.0));
@@ -274,6 +350,9 @@ mod tests {
     #[test]
     fn mouse_delta_is_clamped() {
         let mut input = Input::new();
+        // Dwa zdarzenia: pierwsze ustala pozycję odniesienia, drugie
+        // symuluje skok kursora (np. po powrocie z alt-tab).
+        input.set_mouse_position(0.0, 0.0);
         input.set_mouse_position(10_000.0, 0.0);
         assert!(
             input.mouse_delta().x <= MAX_MOUSE_DELTA,
@@ -289,6 +368,105 @@ mod tests {
         assert_eq!(input.scroll_delta(), Vec2::new(0.0, 3.0));
         input.end_frame();
         assert_eq!(input.scroll_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn first_mouse_position_is_not_treated_as_movement() {
+        // Regres: przy starcie okna kursor przeskakuje z (0,0) na środek.
+        // Ta pierwsza pozycja to punkt odniesienia, a nie ruch — inaczej
+        // obrót kamery przeskakiwałby o pół ekranu przy starcie gry.
+        let mut input = Input::new();
+        input.set_mouse_position(640.0, 360.0);
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::ZERO,
+            "pierwszy ruch to nie delta"
+        );
+
+        // Drugie zdarzenie już jest prawdziwym ruchem.
+        input.set_mouse_position(660.0, 360.0);
+        assert_eq!(input.mouse_delta(), Vec2::new(20.0, 0.0));
+
+        // Delta jest różnicą, więc cofanie działa symetrycznie.
+        input.set_mouse_position(650.0, 355.0);
+        assert_eq!(input.mouse_delta(), Vec2::new(-10.0, -5.0));
+    }
+
+    /// Regres: zablokowany kursor nie może zatrzymać kamery.
+    ///
+    /// Przy `CursorGrabMode::Locked` kursor stoi w centrum okna, więc
+    /// pozycja się nie zmienia i `mouse_delta()` liczona z niej
+    /// zawsze wynosi ZERO. Jedynym źródłem obrotu jest wtedy
+    /// `DeviceEvent::MouseMotion` (ruch względny). Ten test udowadnia,
+    /// że sam ruch względny wystarczy do obrócenia kamery.
+    #[test]
+    fn raw_motion_turns_the_camera_while_cursor_is_locked() {
+        let mut input = Input::new();
+
+        // Kursor zablokowany: system wciąż raportuje tę samą
+        // pozycję w centrum okna, więc z niej nie da się wyczytać ruchu.
+        input.set_mouse_position(640.0, 360.0);
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::ZERO,
+            "pozycja sama w sobie nie niesie informacji o ruchu"
+        );
+
+        // Ruch względny 12 px w prawo — kamera musi się obrócić.
+        input.add_raw_motion(12.0, 0.0);
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::new(12.0, 0.0),
+            "zablokowany kursor musi dawać obrót z ruchu względnego"
+        );
+    }
+
+    /// Ruch względny musi się sumować w klatce i zerować po niej.
+    ///
+    /// Bez `end_frame` suma rośłaby w nieskończoność: kamera skoczyłaby
+    /// raz, a potem już nigdy by nie reagowała.
+    #[test]
+    fn raw_motion_accumulates_and_resets_each_frame() {
+        let mut input = Input::new();
+        input.add_raw_motion(3.0, 1.0);
+        input.add_raw_motion(4.0, 0.0);
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::new(7.0, 1.0),
+            "zdarzenia na jednej klatce sumują się"
+        );
+
+        input.end_frame();
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::ZERO,
+            "po klatce akumulator musi być czysty"
+        );
+    }
+
+    /// Ruch względny podlega temu samemu limitowi co pozycja.
+    #[test]
+    fn raw_motion_is_clamped_too() {
+        let mut input = Input::new();
+        input.add_raw_motion(10_000.0, 0.0);
+        assert!(
+            input.mouse_delta().x <= MAX_MOUSE_DELTA,
+            "skok z surowego wejścia musi być ograniczony tak samo"
+        );
+    }
+
+    /// Bez blokady kursora zachowanie się nie zmienia — pozycja
+    /// nadal wystarcza (np. `uran-tanks`, `junak-rider`).
+    #[test]
+    fn unlocked_cursor_still_uses_position_delta() {
+        let mut input = Input::new();
+        input.set_mouse_position(100.0, 50.0);
+        input.set_mouse_position(110.0, 50.0);
+        assert_eq!(
+            input.mouse_delta(),
+            Vec2::new(10.0, 0.0),
+            "try bez blokady nie może polegać na ruchu względnym"
+        );
     }
 
     #[test]

@@ -322,6 +322,17 @@ impl ApplicationHandler for AppState {
             ))
             .with_resizable(self.descriptor.resizable);
 
+        // Pełny ekran ustawiamy **przed** utworzeniem okna — w winit
+        // `Fullscreen::Borderless(None)` znaczy „monitor tego okna",
+        // więc musi trafić do atrybutów, nie do `set_fullscreen` po
+        // fakcie. Borderless, nie Exclusive: exclusive potrafi zawiesić
+        // kompozytor na Wayland/X11 i zabiera fokus innym oknom.
+        let attributes = if self.descriptor.fullscreen {
+            attributes.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
+        } else {
+            attributes
+        };
+
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(e) => {
@@ -339,6 +350,19 @@ impl ApplicationHandler for AppState {
 
         if !self.descriptor.cursor_visible {
             window.set_cursor_visible(false);
+        }
+
+        // Blokada kursora: system chowa go i raportuje ruch względem
+        // środka okna. Bez tego mysz ucieka do rogów po kilku
+        // obrotach kamery i sterowanie staje się niemożliwe.
+        if self.descriptor.cursor_locked {
+            // `set_cursor_grab` zwraca `Result` — na Wayland bywa
+            // odrzucone, gdy okno nie ma jeszcze fokusu. Nie jest to
+            // powód do przerwania gry, więto ostrzegamy i jedziemy
+            // dalej; `Focused(true)` spróbuje ponownie.
+            if let Err(e) = window.set_cursor_grab(winit::window::CursorGrabMode::Locked) {
+                eprintln!("⚠️  nie udało się zablokować kursora: {e}");
+            }
         }
 
         let renderer = match pollster::block_on(Renderer::new(
@@ -373,6 +397,30 @@ impl ApplicationHandler for AppState {
         self.window = Some(window);
     }
 
+    /// Zdarzenia **urządzenia** (nie okna) — tu trafia ruch myszy
+    /// przy zablokowanym kursorze.
+    ///
+    /// To nie jest opcjonalne dla FPS-a: `WindowEvent::CursorMoved`
+    /// raportuje *pozycję* kursora, a przy `CursorGrabMode::Locked`
+    /// pozycja stoi w centrum okna i nie zmienia się. Bez tego
+    /// callbacka `mouse_delta()` zwraca wieczne ZERO i kamera stoi
+    /// nieruchomo mimo ruszania myszą.
+    ///
+    /// `DeviceEvent` przychodzi poza parą okno–zdarzenia, stąd
+    /// osobna metoda `ApplicationHandler`.
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
+            // winit 0.30 daje tu krotkę `(x, y)`, nie wektor — stąd
+            // rozwijanie ręczne zamiast `delta.x`.
+            self.input.add_raw_motion(delta.0 as f32, delta.1 as f32);
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -393,6 +441,24 @@ impl ApplicationHandler for AppState {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.window_state.scale_factor = *scale_factor as f32;
+            }
+            // Zablokowany kursor puścamy przy utracie fokusu, bo inaczej
+            // po alt-tabie kursor zostaje „złapany" w oknie, którego
+            // nie widać — kursor znika, a gracz nie ma jak wrócić.
+            // Wracamy do łapania dopiero przy `Focused(true)`.
+            WindowEvent::Focused(false) => {
+                if self.descriptor.cursor_locked {
+                    if let Some(window) = &self.window {
+                        let _ = window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                    }
+                }
+            }
+            WindowEvent::Focused(true) => {
+                if self.descriptor.cursor_locked {
+                    if let Some(window) = &self.window {
+                        let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Locked);
+                    }
+                }
             }
             WindowEvent::RedrawRequested => {
                 self.tick();

@@ -237,31 +237,32 @@ impl Renderer3d {
         // Świadomie bez mapy cieni — w trakcie tego passu jest ona
         // celem renderowania, a wgpu odrzuca zasób użyty w jednym
         // passie jako źródło i jako attachment.
-        let shadow_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Uran 3D Shadow BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let shadow_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Uran 3D Shadow BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
         // Layout passu cienia deklaruje TYLKO bindingi 0 i 1, wiec
         // przekazujemy `None`/`None` — `create_bind_group` wymaga
         // dokladnie tylu wpisow, ile jest w layoutcie.
@@ -373,11 +374,12 @@ impl Renderer3d {
         // Układ wierzchołków MUSI być identyczny z głównym potokiem:
         // oba czytają ten sam `GpuMesh` z tym samym buforem, a layout
         // bufora jest częścią kontraktu z potokiem.
-        let shadow_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Uran 3D Shadow Pipeline Layout"),
-            bind_group_layouts: &[&shadow_bind_layout],
-            push_constant_ranges: &[],
-        });
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Uran 3D Shadow Pipeline Layout"),
+                bind_group_layouts: &[&shadow_bind_layout],
+                push_constant_ranges: &[],
+            });
 
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Uran 3D Shadow Pipeline"),
