@@ -32,4 +32,6 @@ pub mod mtl;
 pub mod obj;
 
 pub use mtl::{Material, MaterialLib};
-pub use obj::{load_from_file, parse_obj, ImportedModel, ModelPart, ObjScene};
+pub use obj::{
+    load_from_file, load_from_file_with_axes, parse_obj, AxisUp, ImportedModel, ModelPart, ObjScene,
+};

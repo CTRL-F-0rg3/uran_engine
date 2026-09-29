@@ -306,7 +306,10 @@ mod tests {
         let lib = MaterialLib::parse("newmtl known\nKd 1 0 0\n", ".");
         let m = lib.get("unknown");
         assert!(!lib.contains("unknown"));
-        assert!((m.albedo[0] - m.albedo[1]).abs() < 1e-6, "zapasowy to szarość");
+        assert!(
+            (m.albedo[0] - m.albedo[1]).abs() < 1e-6,
+            "zapasowy to szarość"
+        );
     }
 
     #[test]

@@ -51,10 +51,10 @@ impl Default for BikeConfig {
             brake: 12.0,
             drag: 0.0025,
             rolling: 0.35,
-            max_steer: 0.61,      // ~35°
+            max_steer: 0.61, // ~35°
             steer_rate: 3.2,
             wheelbase: 1.45,
-            max_lean: 0.61,       // ~35°
+            max_lean: 0.61, // ~35°
             lean_stiffness: 6.0,
         }
     }
@@ -273,7 +273,11 @@ mod tests {
         let c = cfg();
         // dociąga do maksimum, ale go NIE przekracza
         assert!(b.speed > c.max_speed * 0.9, "za wolno: {}", b.speed);
-        assert!(b.speed <= c.max_speed + 1e-3, "przekroczona max: {}", b.speed);
+        assert!(
+            b.speed <= c.max_speed + 1e-3,
+            "przekroczona max: {}",
+            b.speed
+        );
     }
 
     #[test]
@@ -295,7 +299,12 @@ mod tests {
         run(&mut b, 5.0, 1.0, 0.0);
         run(&mut a, 2.0, 0.0, 0.0);
         run(&mut b, 2.0, -1.0, 0.0);
-        assert!(b.speed < a.speed, "hamowanie wolniejsze: {} vs {}", b.speed, a.speed);
+        assert!(
+            b.speed < a.speed,
+            "hamowanie wolniejsze: {} vs {}",
+            b.speed,
+            a.speed
+        );
     }
 
     #[test]
@@ -306,13 +315,17 @@ mod tests {
         run(&mut b, 2.0, 1.0, 1.0);
         assert!(
             (b.steer - c.max_steer).abs() < 0.02,
-            "wychył {} nie doszedł do limitu {}", b.steer, c.max_steer
+            "wychył {} nie doszedł do limitu {}",
+            b.steer,
+            c.max_steer
         );
         // i w drugą stronę
         run(&mut b, 3.0, 1.0, -1.0);
         assert!(
             (b.steer + c.max_steer).abs() < 0.02,
-            "w lewo {} nie doszedł do -{}", b.steer, c.max_steer
+            "w lewo {} nie doszedł do -{}",
+            b.steer,
+            c.max_steer
         );
     }
 
@@ -354,7 +367,11 @@ mod tests {
     fn lean_is_capped_so_bike_does_not_tip_over() {
         let mut b = Bike::default();
         run(&mut b, 15.0, 1.0, 1.0);
-        assert!(b.lean.abs() <= cfg().max_lean + 1e-4, "przewrócił się: {}", b.lean);
+        assert!(
+            b.lean.abs() <= cfg().max_lean + 1e-4,
+            "przewrócił się: {}",
+            b.lean
+        );
     }
 
     #[test]
@@ -365,7 +382,9 @@ mod tests {
         assert!(b.speed < 0.0, "nie cofa: {}", b.speed);
         assert!(
             b.speed >= -c.reverse_speed - 1e-3,
-            "cofanie przekroczyło limit: {} > {}", b.speed, -c.reverse_speed
+            "cofanie przekroczyło limit: {} > {}",
+            b.speed,
+            -c.reverse_speed
         );
     }
 

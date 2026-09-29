@@ -15,7 +15,7 @@ use uran_engine::prelude::*;
 use uran_math::Mat4;
 use uran_render3d::import;
 use uran_render3d::mesh::model_matrix;
-use uran_render3d::{DrawCmd, MeshId, Renderer3d};
+use uran_render3d::{DrawCmd, MaterialId, MeshId, Renderer3d};
 
 use bike::{Bike, BikeConfig};
 
@@ -48,7 +48,9 @@ fn find_model() -> Option<std::path::PathBuf> {
     tried.push(rel);
 
     // 3. katalog źródłowy crate'a — niezawodne przy `cargo run` z roota
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets").join(MODEL_FILE);
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join(MODEL_FILE);
     if manifest.is_file() {
         return Some(manifest);
     }
@@ -74,14 +76,20 @@ const BIKE_HEIGHT: f32 = 1.2;
 const BIKE_LIFT: f32 = 0.0;
 
 /// Kamera: jak daleko za motocyklem i jak wysoko.
-const CAM_BACK: f32 = 6.5;
-const CAM_UP: f32 = 2.35;
+///
+/// Wysokość celowo tuż NAD siedzeniem (ok. 1,5 m), a nie wysoko
+/// nad głową. Kamera patrząca z góry zgniata motocykl do płaskiej
+/// plamy — nie widać ani kierownicy, ani nadwozia, ani tego, że
+/// przechyla się w zakręcie.
+const CAM_BACK: f32 = 4.3;
+const CAM_UP: f32 = 1.52;
 /// Jak bardzo kamera pochyla się podczas skrętu (radiany).
 const CAM_SIDE: f32 = 1.1;
 
 /// Identyfikatory siatek w rejestrze renderera.
 struct Meshes {
-    bike: Vec<MeshId>,
+    /// (siatka, materiał) dla każdej części modelu
+    bike: Vec<(MeshId, MaterialId)>,
     asphalt: MeshId,
     verge: MeshId,
     paint: MeshId,
@@ -120,9 +128,18 @@ impl Game {
         }
 
         // --- model z pliku .obj
+        //
+        // Konwencja osi jest jawna, bo ten plik jest Y-up. Dowód
+        // z samego pliku: część `wheel_f` to cztery łuki przy
+        // `z = ±0.227` rozciągnięte w x i y — czyli dysk w
+        // płaszczyźnie XY, cienki w Z. Oś koła to Z, a oś koła
+        // motocykla jest zawsze pozioma, więc Z to SZEROKOŚĆ.
+        // Skoro koło przednie leży na skrajnym ujemnym X, to X jest
+        // długością, a pozostała oś Y — wysokością. Przy Z-up
+        // (`AxisUp::Z`) bryła wylądowałaby na boku.
         let mut bike_parts = Vec::new();
         let loaded = find_model().and_then(|p| {
-            match import::obj::load_from_file(&p) {
+            match import::obj::load_from_file_with_axes(&p, import::AxisUp::Y) {
                 Ok(m) => Some(m),
                 Err(e) => {
                     eprintln!("⚠️  nie udało się wczytać `{}`: {e}", p.display());
@@ -143,7 +160,13 @@ impl Game {
                     s.z
                 );
                 for part in &model.parts {
-                    bike_parts.push(scene.add_mesh(gpu, &part.mesh, &part.name));
+                    // Material z pliku `.mtl` (albo zapasowy, gdy pliku
+                    // nie ma) rejestrujemy w banku i wiążemy z siatką.
+                    // Dzięki temu dodanie tekstur to PODMIANA plików
+                    // w katalogu `assets/`, a nie zmiana w kodzie.
+                    let mat = scene.add_material(gpu, &part.material);
+                    let id = scene.add_mesh(gpu, &part.mesh, &part.name);
+                    bike_parts.push((id, mat));
                 }
             }
             None => {
@@ -157,35 +180,16 @@ impl Game {
                         Vec3::X,
                         [0.9, 0.2, 0.2],
                     ),
-                    uran_render3d::Vertex::new(
-                        Vec3::new(0.4, 0.0, -0.4),
-                        Vec3::X,
-                        [0.9, 0.2, 0.2],
-                    ),
-                    uran_render3d::Vertex::new(
-                        Vec3::new(0.0, 1.2, -0.4),
-                        Vec3::X,
-                        [0.9, 0.2, 0.2],
-                    ),
+                    uran_render3d::Vertex::new(Vec3::new(0.4, 0.0, -0.4), Vec3::X, [0.9, 0.2, 0.2]),
+                    uran_render3d::Vertex::new(Vec3::new(0.0, 1.2, -0.4), Vec3::X, [0.9, 0.2, 0.2]),
                 );
                 m.tri(
-                    uran_render3d::Vertex::new(
-                        Vec3::new(-0.4, 0.0, 0.4),
-                        Vec3::X,
-                        [0.9, 0.2, 0.2],
-                    ),
-                    uran_render3d::Vertex::new(
-                        Vec3::new(0.4, 0.0, 0.4),
-                        Vec3::X,
-                        [0.9, 0.2, 0.2],
-                    ),
-                    uran_render3d::Vertex::new(
-                        Vec3::new(0.0, 1.2, 0.4),
-                        Vec3::X,
-                        [0.9, 0.2, 0.2],
-                    ),
+                    uran_render3d::Vertex::new(Vec3::new(-0.4, 0.0, 0.4), Vec3::X, [0.9, 0.2, 0.2]),
+                    uran_render3d::Vertex::new(Vec3::new(0.4, 0.0, 0.4), Vec3::X, [0.9, 0.2, 0.2]),
+                    uran_render3d::Vertex::new(Vec3::new(0.0, 1.2, 0.4), Vec3::X, [0.9, 0.2, 0.2]),
                 );
-                bike_parts.push(scene.add_mesh(gpu, &m, "fallback tetra"));
+                let id = scene.add_mesh(gpu, &m, "fallback tetra");
+                bike_parts.push((id, MaterialId(0)));
             }
         }
 
@@ -215,10 +219,14 @@ impl Game {
 
 /// Obrot modelu względem osi obrotu silnika.
 ///
-/// Po imporcie model jest ustawiony oryginalnie z Blendera: przód
-/// wskazuje `-X`. Silnik jedzie po `+Z` przy `yaw = 0`, więc trzeba
-/// obrócić bryłę o 90° wokół Y. Gdyby ta stała była zła, motocykl
-/// jechałby bokiem do drogi — stąd osobna nazwa i komentarz.
+/// Niezależnie od konwencji osi w pliku (patrz `AxisUp` w importerze)
+/// przód motocykla w leży w `-X`, a silnik jedzie po `+Z` przy
+/// `yaw = 0`. Obrót o +90° wokół Y przenosi `-X` na `+Z`.
+///
+/// Znak jest tu nieoczywisty, bo zależy od tego, czy `Quat::from_rotation_y`
+/// obraca zgodnie z prawoskrętną regułą (czyli tak, jak wygląda obrót
+/// patrząc z góry na dół osi). Gdyby ta stała była zła, motocykl jechałby
+/// bokiem do drogi — stąd osobna nazwa i test `bike_matrix_points_the_nose_forward`.
 const BIKE_YAW_OFFSET: f32 = std::f32::consts::FRAC_PI_2;
 
 /// Macierz modelu motocykla w świecie.
@@ -259,8 +267,8 @@ fn update_camera(game: &mut Game) {
 fn build_draw_list(game: &mut Game) {
     let mut cmds = Vec::with_capacity(game.meshes.bike.len() + 3);
     let m = bike_matrix(&game.bike);
-    for id in &game.meshes.bike {
-        cmds.push(DrawCmd::new(*id, m));
+    for (id, mat) in &game.meshes.bike {
+        cmds.push(DrawCmd::new(*id, m).with_material(*mat));
     }
     // Droga leży w miejscu — jej transformacja to tylko przesunięcie
     // świata, a ono wynika z cofnięcia motocykla (patrz `update`).
@@ -368,10 +376,12 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
             Vec2::new(24.0, size.y - 74.0),
             Vec2::new(24.0 + 220.0, size.y - 64.0),
         ));
-    ctx.gfx.color(Color::from_hex(0x66CCFF)).draw_rect(Rect::new(
-        Vec2::new(26.0, size.y - 72.0),
-        Vec2::new(26.0 + 216.0 * t, size.y - 66.0),
-    ));
+    ctx.gfx
+        .color(Color::from_hex(0x66CCFF))
+        .draw_rect(Rect::new(
+            Vec2::new(26.0, size.y - 72.0),
+            Vec2::new(26.0 + 216.0 * t, size.y - 66.0),
+        ));
 
     let Some(font) = game.font else { return };
 
@@ -421,9 +431,7 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
     let fps = ctx.time.fps();
     ctx.gfx.color(Color::from_hex(0x6C7A90)).draw_text(
         font,
-        &format!(
-            "{fps:.0} FPS   W gas   S brake   A/D steer   R restart   ESC quit"
-        ),
+        &format!("{fps:.0} FPS   W gas   S brake   A/D steer   R restart   ESC quit"),
         Vec2::new(24.0, 48.0),
         14.0,
         TextAlign::Left,
@@ -482,6 +490,83 @@ fn setup(ctx: &mut Ctx, game: &mut Game) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test chroni przed najdroższym błędem tej gry: model ustawiony
+    /// bokiem do kierunku jazdy. Wygląda to jak „działa, tylko dziwnie",
+    /// a poprawia się zmianą jednej stałej.
+    #[test]
+    fn bike_model_points_along_the_direction_of_travel() {
+        // Nos modelu po imporcie leży na `-X` (oryginalna oś Blendera).
+        let nose_local = Vec3::new(-1.0, 0.0, 0.0);
+        let b = Bike::default();
+        let m = bike_matrix(&b);
+        let nose_world = m * uran_math::Vec4::new(nose_local.x, nose_local.y, nose_local.z, 1.0);
+        let nose = Vec3::new(nose_world.x, nose_world.y, nose_world.z);
+
+        // Postój = jazda po `+Z`, więc nos musi wskazywać `+Z`
+        assert!(
+            (nose.z - 1.0).abs() < 1e-4,
+            "nos wskazuje {nose:?} zamiast +Z — model jedzie bokiem"
+        );
+        assert!(nose.x.abs() < 1e-4, "nos ma składową X = {}", nose.x);
+    }
+
+    /// Skręt w prawo musi obrócić model zgodnie z tym, jak obróci się
+    /// kierunek jazdy — inaczej kierownica obraca bryłę w drugą stronę.
+    #[test]
+    fn model_follows_heading() {
+        let mut b = Bike::default();
+        b.yaw = 1.0; // ~57°
+        let nose_local = Vec3::new(-1.0, 0.0, 0.0);
+        let m = bike_matrix(&b);
+        let w = m * uran_math::Vec4::new(nose_local.x, nose_local.y, nose_local.z, 1.0);
+        let nose = Vec3::new(w.x, w.y, w.z).normalize_or_zero();
+        let want = b.forward();
+        assert!(
+            nose.dot(want) > 0.999,
+            "model {nose:?} nie zgadza się z kierunkiem jazdy {want:?}"
+        );
+    }
+
+    /// Model musi stać na ziemi, nie unosić się w powietrzu.
+    #[test]
+    fn bike_matrix_places_the_model_where_the_simulation_says() {
+        let mut b = Bike::default();
+        b.pos = Vec3::new(5.0, 0.0, -12.0);
+        let m = bike_matrix(&b);
+        let p = m * uran_math::Vec4::new(0.0, 0.0, 0.0, 1.0);
+        assert!(
+            (p.x - 5.0).abs() < 1e-4 && (p.z + 12.0).abs() < 1e-4,
+            "model jest w ({}, {}) zamiast (5, -12)",
+            p.x,
+            p.z
+        );
+    }
+
+    /// Kadr kamery: motocykl musi być WIDOCZNY, czyli mieścić się
+    /// między kamerą a punktem patrzenia.
+    #[test]
+    fn camera_sits_behind_and_above_the_bike() {
+        let mut b = Bike::default();
+        b.pos = Vec3::ZERO;
+        b.yaw = 0.0;
+        let f = b.forward();
+        let eye = b.pos - f * CAM_BACK + Vec3::new(0.0, CAM_UP, 0.0);
+        // okno jest 4,3 m za motocyklem i 1,5 m nad nim
+        assert!(
+            (eye.z + CAM_BACK).abs() < 1e-4,
+            "kamera nie jest za motocyklem"
+        );
+        assert!((eye.y - CAM_UP).abs() < 1e-4, "kamera nie jest nad ziemią");
+        // kamera NIE może być wewnątrz modelu (1,2 m wysokości)
+        assert!(eye.y > 1.2, "kamera jest w środku nadwozia");
+    }
+}
+
+/// Punkt wejścia.
 fn main() {
     // Stan gry dzielony między systemy — oba blokują ten sam mutex.
     let game = Arc::new(Mutex::new(None::<Game>));

@@ -155,7 +155,8 @@ fn quad_xz(mesh: &mut Mesh, a: Vec3, b: Vec3, c: Vec3, d: Vec3, col: [f32; 3]) {
     let v3 = Vertex::new_uv(d, n, uv(d), col);
     let i = mesh.vertices.len() as u32;
     mesh.vertices.extend_from_slice(&[v0, v1, v2, v3]);
-    mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+    mesh.indices
+        .extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
 }
 
 /// Pionowy pasek oznakowania między `x0` a `x1`, od `z0` do `z1`.
@@ -181,7 +182,10 @@ mod tests {
     /// jest krzywo" — a przyczyna jest w jednej literze kolejności
     /// wierzchołków. Dlatego testujemy KAŻDY trójkąt, nie losowy.
     fn assert_all_faces_up(m: &Mesh, what: &str) {
-        assert!(m.indices.len() % 3 == 0, "{what}: indeksy nie są trójkątami");
+        assert!(
+            m.indices.len() % 3 == 0,
+            "{what}: indeksy nie są trójkątami"
+        );
         for t in m.indices.chunks_exact(3) {
             let p = |i: u32| m.vertices[i as usize].pos();
             let n = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
@@ -277,6 +281,9 @@ mod tests {
         assert!(tris > 100, "za mało oznakowania: {tris} trójkątów");
         // przerwa 6 m na 9 m → ok. 2/3 pasa pustego
         let dashes = tris / 2 - 2;
-        assert!(dashes > 50 && dashes < 70, "dashes = {dashes}, oczekiwaliśmy ~66");
+        assert!(
+            dashes > 50 && dashes < 70,
+            "dashes = {dashes}, oczekiwaliśmy ~66"
+        );
     }
 }

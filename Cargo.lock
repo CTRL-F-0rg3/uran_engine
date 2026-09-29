@@ -428,6 +428,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "farm-simulator"
+version = "0.1.0"
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1992,6 +1996,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "uran-asset",
  "uran-math",
  "uran-render",
  "wgpu",

@@ -7,12 +7,14 @@
 
 pub mod camera;
 pub mod import;
+pub mod material;
 pub mod mesh;
 pub mod postfx;
 pub mod scene;
 
 pub use camera::{Camera3d, Ray};
 pub use import::{ImportedModel, Material, MaterialLib, ModelPart};
+pub use material::{MaterialBank, MaterialId};
 pub use mesh::{box_corners, model_matrix, GpuMesh, InstanceModel, Mesh, SceneUniform, Vertex};
 pub use postfx::{PostFx, PostSettings};
 pub use scene::{DrawCmd, Lighting, MeshId, Renderer3d};

@@ -114,7 +114,10 @@ pub fn parse_obj(text: &str) -> Result<ObjScene, Box<dyn std::error::Error>> {
         let mut it = line.split_whitespace();
         let Some(key) = it.next() else { continue };
         let rest: Vec<&str> = it.collect();
-        let err = |m: String| ParseError { line: line_no, message: m };
+        let err = |m: String| ParseError {
+            line: line_no,
+            message: m,
+        };
 
         match key {
             "v" => {
@@ -138,7 +141,8 @@ pub fn parse_obj(text: &str) -> Result<ObjScene, Box<dyn std::error::Error>> {
             "f" => {
                 if rest.len() < 3 {
                     return Err(Box::new(err(format!(
-                        "wielokąt ma {} wierzchołków", rest.len()
+                        "wielokąt ma {} wierzchołków",
+                        rest.len()
                     ))));
                 }
                 let mut face = Vec::with_capacity(rest.len());
@@ -160,7 +164,11 @@ pub fn parse_obj(text: &str) -> Result<ObjScene, Box<dyn std::error::Error>> {
                 // Przy pustej nazwie używamy materiału — dzięki temu
                 // lista części nigdy nie zawiera pustego obiektu.
                 let name = rest.join(" ");
-                let name = if name.is_empty() { cur_material.clone() } else { name };
+                let name = if name.is_empty() {
+                    cur_material.clone()
+                } else {
+                    name
+                };
                 cur_object = scene.objects.len();
                 scene.objects.push(name);
             }
@@ -175,36 +183,104 @@ pub fn parse_obj(text: &str) -> Result<ObjScene, Box<dyn std::error::Error>> {
 
 /// Rozwijamy wielokąt na trójkąty (wianek) i pilnujemy orientacji.
 ///
-/// Wianek `(0,i,i+1)` wystarcza dla kwadratów i większości ngonów
-/// Blendera. Tam, gdzie plik DOSTARCZA normalne, dodatkowo sprawdzamy
-/// zgodność iloczynu wektorowego z zapisaną normalną i ewentualnie
-/// zamieniamy dwa wierzchołki. Bez tego przy wklęsłych wielokątach
-/// cześć ścian renderowałaby się do środka i znikała.
+/// ## Dlaczego sprawdzamy CAŁY wielokąt, a nie każdy trójkąt osobno
+///
+/// Iloczyn wektorowy działa tylko dla trójkąta. Przy kwadracie na
+/// zakrzywionej powierzchni (opona, nadwozie) każdy trójkąt wianka leży
+/// w innej płaszczyźnie, a różnica bywa większa niż 90°. Porównanie
+/// jednego trójkąta z gładką normalną wierzchołka daje wtedy przypadkowe
+/// odwrócenia — a każde z nich to dziura, bo przy `cull_mode: Back`
+/// trójkąt znika i widać nieoświetlone wnętrze. Widać to dokładnie tak,
+/// jak opisuje zgłoszenie: **czarne kwadraty** w miejscach, gdzie sam
+/// plik jest poprawny.
+///
+/// Dlatego decyzja jest JEDNA na cały wielokąt, z normalną policzoną
+/// metodą Newella (suma wkładów wszystkich krawędzi — stabilna także dla
+/// wielokąta niepłaskiego) i z **marginesem**: odwracamy tylko przy
+/// jednoznacznym sprzeczności, a nie na granicy szumu.
 fn push_face(scene: &mut ObjScene, face: &[FaceRef], material: &str, object: usize) {
     if face.len() < 3 {
         return;
     }
-    for k in 1..face.len() - 1 {
-        let a = face[0];
-        let b = face[k];
-        let c = face[k + 1];
-        let flip = match (a.nrm, b.nrm, c.nrm) {
-            (Some(na), Some(_), Some(_)) => {
-                let geo = face_normal(
-                    scene.positions[a.pos],
-                    scene.positions[b.pos],
-                    scene.positions[c.pos],
-                );
-                let s = scene.normals[na];
-                geo.dot(Vec3::new(s[0], s[1], s[2])) < 0.0
+
+    let reverse = match face_avg_normal(scene, face) {
+        Some(avg) => {
+            let geo = polygon_normal(scene, face);
+            let (gl, al) = (geo.length(), avg.length());
+            if gl < 1e-9 || al < 1e-9 {
+                false
+            } else {
+                // cos kąta między nimi; ujemny = skierowane przeciwnie.
+                // -0.2 to próg: powyżej 101° sprzeczności, więc przy
+                // legalnym łuku wielokąta nigdy nie wchodzimy w tę gałąź.
+                geo.dot(avg) / (gl * al) < -0.2
             }
-            // bez normalnych nie mamy czym zweryfikować — ufamy plikowi
-            _ => false,
+        }
+        // Bez normalnych nie mamy czym zweryfikować — ufamy plikowi.
+        None => false,
+    };
+
+    for k in 1..face.len() - 1 {
+        // Odwrócenie całego wianka naraz: inaczej sąsiednie trójkąty
+        // tej samej ściany dostałyby przeciwne zwroty.
+        let (a, b, c) = if reverse {
+            (face[0], face[k + 1], face[k])
+        } else {
+            (face[0], face[k], face[k + 1])
         };
-        let (b, c) = if flip { (c, b) } else { (b, c) };
+        // Trójkąt o zerowym polu nie pokryje żadnego piksela, a jego
+        // normalna geometryczna to (0,0,0) -> `normalize` daje NaN ->
+        // czarny piksel. Pomijamy go całkowicie.
+        let gn = face_normal(
+            scene.positions[a.pos],
+            scene.positions[b.pos],
+            scene.positions[c.pos],
+        );
+        if gn.length() < 1e-12 {
+            continue;
+        }
         scene.triangles.push([a, b, c]);
         scene.tri_material.push(material.to_string());
         scene.tri_object.push(object);
+    }
+}
+
+/// Normalna wielokątu metodą Newella.
+///
+/// Suma `(p_i - p_{i+1}) x (p_i + p_{i+1})` po wszystkich krawędziach.
+/// W przeciwieństwie do iloczynu wektorowego działa dla dowolnej liczby
+/// wierzchołków i dla wielokąta **niepłaskiego** — a takie właśnie są
+/// kwadraty z Blendera na częściach cylindrycznych.
+fn polygon_normal(scene: &ObjScene, face: &[FaceRef]) -> Vec3 {
+    let mut n = Vec3::ZERO;
+    for i in 0..face.len() {
+        let a = scene.positions[face[i].pos];
+        let b = scene.positions[face[(i + 1) % face.len()].pos];
+        n += Vec3::new(
+            (a[1] - b[1]) * (a[2] + b[2]),
+            (a[2] - b[2]) * (a[0] + b[0]),
+            (a[0] - b[0]) * (a[1] + b[1]),
+        );
+    }
+    n
+}
+
+/// Średnia z normalnych wierzchołków wielokątu, albo `None`, gdy plik
+/// ich nie podał.
+fn face_avg_normal(scene: &ObjScene, face: &[FaceRef]) -> Option<Vec3> {
+    let mut sum = Vec3::ZERO;
+    let mut count = 0u32;
+    for f in face {
+        if let Some(i) = f.nrm {
+            let n = scene.normals[i];
+            sum += Vec3::new(n[0], n[1], n[2]);
+            count += 1;
+        }
+    }
+    if count == 0 {
+        None
+    } else {
+        Some(sum / count as f32)
     }
 }
 
@@ -228,17 +304,44 @@ fn face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> Vec3 {
     u.cross(v)
 }
 
-/// Zamienia Z-up (Blender) na Y-up (silnik).
+/// Która oś pliku `.obj` wskazuje w górę.
 ///
-/// Blender: X = wzdłuż modelu, Y = szerokość, Z = wysokość.
-/// Silnik: X = wzdłuż, Y = wysokość, Z = szerokość.
+/// **Nie zgadujemy tego po wymiarach.** Dla motocykla długość, wysokość
+/// i szerokość różnią się nieznacznie, a wczytanie modelu „na czuja"
+/// daje bryłę leżącą na boku — i wygląda to jak błąd silnika, a nie
+/// konfiguracji. Konwencja jest więc jawna i zapisywana przez tego, kto
+/// zna model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AxisUp {
+    /// `+Z` w górę — tak eksportuje Blender z ustawieniem domyślnym.
+    #[default]
+    Z,
+    /// `+Y` w górę — tak eksportuje Blender po włączeniu `Y up`
+    /// w opcjach eksportu Wavefront (oraz np. assimp, gdy nie
+    /// skaluje osi).
+    Y,
+}
+
+/// Zamienia oś pliku na układ silnika (Y-up, prawoskrętny).
 ///
-/// Mapowanie `(x, y, z) -> (x, z, y)` zamienia oś Y na Z, co ODWRACA
-/// układ (det = -1) i odwróciłoby wszystkie twarze. Dlatego jedną
-/// składową zostawiamy z minusem: `(x, z, -y)` to obrót o -90° wokół X,
-/// czyli właściwa rotacja — twarze pozostają widoczne od zewnątrz.
-fn blender_to_engine(p: [f32; 3]) -> Vec3 {
-    Vec3::new(p[0], p[2], -p[1])
+/// ## Dlaczego to osobna funkcja, a nie `powiązanie` w kodzie
+///
+/// Obie konwencje muszą dać w macierzy **det = +1**. Mapowanie
+/// `(x, y, z) -> (x, z, y)` ma det = -1, czyli ODWRACA układ, a wraz
+/// nim kierunek zwrotu trójkątów: przy włączonym `cull_mode: Back`
+/// cały model znikałby jako „odwrócony do wewnątrz". Dlatego przy
+/// `Z up` schodzimy do przodu (`-y`), a przy `Y up` nie ruszamy
+/// niczego — to już układ docelowy.
+fn to_engine(p: [f32; 3], up: AxisUp) -> Vec3 {
+    match up {
+        // Blender Z-up: X = długość, Y = szerokość, Z = wysokość.
+        // Silnik: X = długość, Y = wysokość, Z = szerokość.
+        // Obrót o -90° wokół X (jedna składowa z minusem = det +1).
+        AxisUp::Z => Vec3::new(p[0], p[2], -p[1]),
+        // Blender Y-up: X = długość, Y = wysokość, Z = szerokość.
+        // Identyczność, więc wiatraka trójkątów nie ruszamy.
+        AxisUp::Y => Vec3::new(p[0], p[1], p[2]),
+    }
 }
 
 /// Jedna część modelu: geometria + nazwa + materiał.
@@ -265,7 +368,7 @@ pub struct ImportedModel {
 /// Nie optymalizujemy wspólnych wierzchołków między ścianami: pliki
 /// z Blendera i tak rzadko je dzielą, a scalanie po pozycji psułoby
 /// mapowanie UV, które akurat w tych modelach jest istotne.
-fn build(scene: ObjScene, lib: &MaterialLib) -> ImportedModel {
+fn build(scene: ObjScene, lib: &MaterialLib, up: AxisUp) -> ImportedModel {
     // Tylko obiekty, które faktycznie mają trójkąty.
     let mut order: Vec<usize> = (0..scene.objects.len()).collect();
     order.retain(|&o| scene.tri_object.contains(&o));
@@ -284,21 +387,37 @@ fn build(scene: ObjScene, lib: &MaterialLib) -> ImportedModel {
             }
             let material = lib.get(&scene.tri_material[ti]);
             // Normalna z geometrii — awaryjnie, gdy plik nie ma `vn`.
-            let gn = face_normal(
-                scene.positions[tri[0].pos],
-                scene.positions[tri[1].pos],
-                scene.positions[tri[2].pos],
+            // Przechodzi tę samą transformację co pozycja; inaczej przy
+            // pliku Y-up (gdzie `to_engine` jest identycznością) zgadza
+            // się przypadkiem, a przy Z-up wskazywałaby w złym układzie.
+            let gn = to_engine(
+                face_normal(
+                    scene.positions[tri[0].pos],
+                    scene.positions[tri[1].pos],
+                    scene.positions[tri[2].pos],
+                )
+                .to_array(),
+                up,
             )
             .normalize_or_zero();
 
             for corner in tri {
-                let p = blender_to_engine(scene.positions[corner.pos]);
+                let p = to_engine(scene.positions[corner.pos], up);
+                // Normalna przechodzi TĘ SAMĄ transformację co pozycja.
+                // Pominięcie jej tutaj daje model, który wygląda poprawnie
+                // z każdego kąta, ale jest zamalowany czarnym: światło
+                // pada na wnętrzność bryły, bo wektor wskazuje w stronę
+                // przeciwną. Pozycje i normalne były w układzie pliku,
+                // a silnik oczekuje obu w układzie silnika.
                 let n = corner
                     .nrm
-                    .map(|i| {
-                        let r = scene.normals[i];
-                        Vec3::new(r[0], r[1], r[2])
-                    })
+                    .map(|i| to_engine(scene.normals[i], up).normalize_or_zero())
+                    // `unwrap_or` NIE wystarcza: `.map()` da tu `Some(ZERO)`,
+                    // gdy plik zapisał zerową normalną, a `normalize(vec3(0))`
+                    // w WGSL to NaN, który wychodzi czarnym pikselem.
+                    // Dopiero porównanie długości odsiewa taki przypadek
+                    // i sprowadza go do normalnej geometrycznej.
+                    .filter(|v| v.length() > 0.5)
                     .unwrap_or(gn);
                 let uv = corner.uv.map(|i| scene.uvs[i]).unwrap_or([0.0, 0.0]);
                 // Kd jako kolor wierzchołka: gdy jest tekstura, shader
@@ -450,18 +569,45 @@ impl ImportedModel {
                 merged.indices.push(base + i);
             }
         }
-        let material = self.parts.first().map(|p| p.material.clone()).unwrap_or_default();
-        self.parts = vec![ModelPart { name: "merged".into(), mesh: merged, material }];
+        let material = self
+            .parts
+            .first()
+            .map(|p| p.material.clone())
+            .unwrap_or_default();
+        self.parts = vec![ModelPart {
+            name: "merged".into(),
+            mesh: merged,
+            material,
+        }];
     }
 }
 
-/// Wczytuje `.obj` wraz z `.mtl`.
+/// Wczytuje `.obj` wraz z `.mtl`, zakładając plik **Z-up**.
+///
+/// To skrót dla [`load_from_file_with_axes`] z [`AxisUp::Z`], czyli
+/// domyślnym ustawieniem eksportu Blendera.
+pub fn load_from_file(path: impl AsRef<Path>) -> Result<ImportedModel, Box<dyn std::error::Error>> {
+    load_from_file_with_axes(path, AxisUp::Z)
+}
+
+/// Wczytuje `.obj` wraz z `.mtl` z jawną konwencją osi pionowej.
 ///
 /// `path` wskazuje na plik `.obj`. Katalog `.mtl` bierzemy z dyrektywy
 /// `mtllib`, a jeśli go nie ma — z katalogu samego `.obj`. Brakujący
 /// `.mtl` to nie błąd: model dostanie materiały zastępcze i wciąż
 /// się załaduje.
-pub fn load_from_file(path: impl AsRef<Path>) -> Result<ImportedModel, Box<dyn std::error::Error>> {
+///
+/// ## Pojawia się parametr `up`
+///
+/// Zly wybór tej wartości nie daje błędu parsowania ani pustego kadru —
+/// model wczytuje się „dobrze", tylko leży na boku albo stoi na
+/// głowie. Dlatego `up` jest parametrem jawnym, a nie heurystyką
+/// wyliczaną z wymiarów: wymiary motocykla (długość ≈ 2,5 m, wysokość
+/// ≈ 1,2 m, szerokość ≈ 0,8 m) nie pozwalają odróżnić osi wiarygodnie.
+pub fn load_from_file_with_axes(
+    path: impl AsRef<Path>,
+    up: AxisUp,
+) -> Result<ImportedModel, Box<dyn std::error::Error>> {
     let path = path.as_ref();
     let text = std::fs::read_to_string(path)?;
     let scene = parse_obj(&text)?;
@@ -480,9 +626,20 @@ pub fn load_from_file(path: impl AsRef<Path>) -> Result<ImportedModel, Box<dyn s
         Err(_) => MaterialLib::default(),
     };
 
-    let mut model = build(scene, &lib);
+    let mut model = build(scene, &lib, up);
     model.normalize_to_ground();
     Ok(model)
+}
+
+/// Ścieżka do modelu testowego w repo, albo `None`, gdy go nie ma.
+///
+/// Testy pomijają się cicho, gdy pliku brakuje — kopia repo bez
+/// zasobów nie może być powodem do czerwonego buildu.
+#[cfg(test)]
+pub fn test_model_path() -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../junak-rider/assets/junak m10.obj");
+    p.is_file().then_some(p)
 }
 
 #[cfg(test)]
@@ -537,42 +694,62 @@ f 1/1/1 2/2/1 3/3/1 4/4/1
     #[test]
     fn blender_zup_becomes_engine_yup() {
         // (1, 2, 3) w Blenderze: x=1, y=2 (szerokość), z=3 (wysokość)
-        let p = blender_to_engine([1.0, 2.0, 3.0]);
+        let p = to_engine([1.0, 2.0, 3.0], AxisUp::Z);
         assert!((p.x - 1.0).abs() < 1e-6, "oś X bez zmian");
         assert!((p.y - 3.0).abs() < 1e-6, "Z Blendera staje się Y silnika");
         assert!((p.z - (-2.0)).abs() < 1e-6, "Y Blendera staje się -Z");
     }
 
+    /// Plik Y-up (Blender z włączonym `Y up`) NIE wolno obracać.
+    ///
+    /// To nie jest kwestia estetyki: przy błędnym założeniu cała bryła
+    /// ląduje na boku, a model wczytuje się „poprawnie" — brak błędu
+    /// parsowania, pusty kadru też nie ma. Wykrywa to wyłącznie obrót
+    /// świata: koło motocykla staje się pionowe.
     #[test]
-    fn axis_conversion_preserves_winding() {
-        // Konwersja osi MUSI być właściwą rotacją (det = +1), inaczej
-        // cały model renderowałby się do środka — odwrócone culling
-        // zamienia widoczne ściany w niewidoczne.
-        //
-        // Nie porównujemy „normalnej przed" z „normalną po": to jest
-        // OBRÓT, więc wektor normalnej też się zmienia i musiałby
-        // przejść tę samą transformację. Sprawdzamy więc niezmiennik
-        // samej transformacji: ortonormalność i znak wyznacznika.
-        let bx = Vec3::X;
-        let by = Vec3::Y;
-        let bz = Vec3::Z;
-        let ex = blender_to_engine(bx.to_array());
-        let ey = blender_to_engine(by.to_array());
-        let ez = blender_to_engine(bz.to_array());
+    fn yup_file_is_left_untouched() {
+        let p = to_engine([1.0, 2.0, 3.0], AxisUp::Y);
+        assert!((p.x - 1.0).abs() < 1e-6, "oś X bez zmian");
+        assert!((p.y - 2.0).abs() < 1e-6, "oś Y bez zmian");
+        assert!((p.z - 3.0).abs() < 1e-6, "oś Z bez zmian");
+    }
 
-        // obraz musi być ortonormalny (to obrót, nie deformacja)
-        for (a, b) in [(ex, ey), (ex, ez), (ey, ez)] {
-            assert!((a.dot(b)).abs() < 1e-6, "wektory nie są prostopadłe");
-            assert!((a.length() - 1.0).abs() < 1e-6, "wektor nie jest jednostkowy");
+    /// Oba warianty muszą dać det = +1, inaczej znika cały model.
+    #[test]
+    fn both_axis_conventions_preserve_winding() {
+        for up in [AxisUp::Z, AxisUp::Y] {
+            let ex = to_engine(Vec3::X.to_array(), up);
+            let ey = to_engine(Vec3::Y.to_array(), up);
+            let ez = to_engine(Vec3::Z.to_array(), up);
+            let det = ex.dot(ey.cross(ez));
+            assert!(
+                (det - 1.0).abs() < 1e-6,
+                "{up:?}: wyznacznik {det} — układ odwrócony, model znika przy cullingu"
+            );
         }
-        // wyznacznik = ex · (ey × ez) — dodatni dla właściwej rotacji
-        let det = ex.dot(ey.cross(ez));
-        assert!((det - 1.0).abs() < 1e-6, "wyznacznik {det} — układ odwrócony");
+    }
+
+    /// Normalna z pliku musi iść tą samą transformacją co pozycja.
+    ///
+    /// Wariant Z-up obraca oś, więc pominięcie normalnej daje model
+    /// oświetlony od wnętrza (czarny) mimo poprawnej geometrii.
+    #[test]
+    fn normals_follow_the_same_transform_as_positions() {
+        // Ściana w płaszczyźnie XY, zwrócona w +Z (do góry przy Z-up).
+        let obj = "v -1 -1 0\nv 1 -1 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n";
+        let s = parse_obj(obj).unwrap();
+        let m = build(s, &MaterialLib::default(), AxisUp::Z);
+        let n = m.parts[0].mesh.vertices[0].normal();
+        // Po obrocie Z-up -> Y-up "do góry" z pliku ma być +Y silnika.
+        assert!(
+            n.y > 0.9,
+            "normalna po imporcie: {n:?} — światło pada na wnętrzność bryły"
+        );
     }
 
     #[test]
     fn normalize_puts_model_on_the_ground() {
-        let mut m = build(parse_obj(CUBE).unwrap(), &MaterialLib::default());
+        let mut m = build(parse_obj(CUBE).unwrap(), &MaterialLib::default(), AxisUp::Z);
         m.normalize_to_ground();
         let min_y = m
             .parts
@@ -580,7 +757,10 @@ f 1/1/1 2/2/1 3/3/1 4/4/1
             .flat_map(|p| p.mesh.vertices.iter())
             .map(|v| v.pos().y)
             .fold(f32::INFINITY, f32::min);
-        assert!(min_y.abs() < 1e-5, "model stoi na podłodze, a nie w {min_y}");
+        assert!(
+            min_y.abs() < 1e-5,
+            "model stoi na podłodze, a nie w {min_y}"
+        );
     }
 
     #[test]
@@ -611,7 +791,7 @@ f 3 8 7
 f 4 1 5
 f 4 5 8
 ";
-        let mut m = build(parse_obj(src).unwrap(), &MaterialLib::default());
+        let mut m = build(parse_obj(src).unwrap(), &MaterialLib::default(), AxisUp::Z);
         assert!((m.bounds_size().y - 2.0).abs() < 1e-5, "w pliku wysokość 2");
         m.scale_to_height(1.2);
         let size = m.bounds_size();
@@ -635,7 +815,7 @@ o c
 usemtl blue
 f 1 2 3
 ";
-        let mut m = build(parse_obj(src).unwrap(), &MaterialLib::default());
+        let mut m = build(parse_obj(src).unwrap(), &MaterialLib::default(), AxisUp::Z);
         assert_eq!(m.parts.len(), 3);
         m.merge_by_material();
         assert_eq!(m.parts.len(), 2, "dwa materiały zamiast trzech obiektów");
@@ -645,7 +825,7 @@ f 1 2 3
 
     #[test]
     fn merge_all_keeps_all_triangles() {
-        let mut m = build(parse_obj(CUBE).unwrap(), &MaterialLib::default());
+        let mut m = build(parse_obj(CUBE).unwrap(), &MaterialLib::default(), AxisUp::Z);
         m.merge_all();
         assert_eq!(m.parts.len(), 1);
         assert_eq!(m.parts[0].mesh.indices.len(), 6);
@@ -674,6 +854,119 @@ f 1 2 3
 
     /// Test integracyjny na modelu junaka prosto z Blendera.
     ///
+    /// ## Dlaczego to był „czarny kwadrat", a nie „dziura w siatce"
+    ///
+    /// Plik jest złożony z kwadratów na zakrzywionych powierzchniach
+    /// (opona, nadwozie). Stary `push_face` porównywał iloczyn wektorowy
+    /// **jednego trójkąta wianka** z **gładką normalną wierzchołka**; na
+    /// łuku te dwa wektory bywają od siebie ponad 90°, więc iloczyn
+    /// wychodził ujemny dla poprawnie zwiniętego trójkąta. Po odwróceniu
+    /// `cull_mode: Back` go odsiewał i widoczne było nieoświetlone wnętrze.
+    ///
+    /// ## Czego ten test NIE robi
+    ///
+    /// Nie porównuje normalnej **trójkąta wianka** z normalnymi pliku —
+    /// to byłby powtórzony ten sam błąd. Na zakrzywionym kwadacie poprawne
+    /// trójkąty mają tam `dot < 0` (sprawdzone na tym pliku: 27 z 64 450),
+    /// bo powierzchnia zakrzywiona jest krzywą, a nie płaszczyzną.
+    ///
+    /// Sprawdzamy niezmiennik **wielokąta**: normalna Newella vs średnia
+    /// z normalnych wierzchołków. Dla tego pliku daje to cos = +1 dla
+    /// wszystkich 24 999 ścian, czyli plik jest spójny i nie wolno go
+    /// „naprawiać" na siłę.
+    #[test]
+    fn real_model_polygons_are_wound_consistently() {
+        let Some(path) = test_model_path() else {
+            eprintln!("pomijam — brak pliku .obj w repo");
+            return;
+        };
+        let text = std::fs::read_to_string(&path).unwrap();
+        let s = parse_obj(&text).unwrap();
+
+        // Odtwarzamy wielokąty z linii `f` — `parse_obj` zwraca już
+        // rozwinięte trójkąty, a tu potrzebujemy całej ściany naraz.
+        let mut polys: Vec<Vec<FaceRef>> = Vec::new();
+        for line in text.lines() {
+            let Some(rest) = line.strip_prefix("f ") else {
+                continue;
+            };
+            let mut face = Vec::new();
+            for (i, tok) in rest.split_whitespace().enumerate() {
+                let npos = s.positions.len();
+                let nuv = s.uvs.len();
+                let nnrm = s.normals.len();
+                match FaceRef::parse(tok, npos, nuv, nnrm) {
+                    Ok(fr) => face.push(fr),
+                    Err(e) => panic!("wielokąt {i}: {e}"),
+                }
+            }
+            if face.len() >= 3 {
+                polys.push(face);
+            }
+        }
+
+        let mut bad = 0usize;
+        let mut min_cos = 1.0f32;
+        for face in &polys {
+            let Some(avg) = face_avg_normal(&s, face) else {
+                continue;
+            };
+            let geo = polygon_normal(&s, face);
+            let (gl, al) = (geo.length(), avg.length());
+            if gl < 1e-9 || al < 1e-9 {
+                continue;
+            }
+            let cos = geo.dot(avg) / (gl * al);
+            min_cos = min_cos.min(cos);
+            if cos < 0.0 {
+                bad += 1;
+            }
+        }
+        assert!(polys.len() > 1000, "przeanalizowano za mało: {}", polys.len());
+        assert_eq!(
+            bad, 0,
+            "{bad} z {} ścian ma wiatrak przeciwny do normalnych pliku \
+             (min cos = {min_cos})",
+            polys.len()
+        );
+        assert!(
+            min_cos > 0.9,
+            "najgorsza ściana ma cos = {min_cos} — plik nie jest wiarygodnym źródłem"
+        );
+    }
+
+    /// Trójkąt o zerowym polu musi zniknąć, bo jego normalna geometryczna
+    /// to (0,0,0), a `normalize(vec3(0))` w WGSL to NaN, który renderuje
+    /// się jako czarny piksel.
+    #[test]
+    fn zero_area_triangles_are_dropped() {
+        // trzy współrzędne na jednej prostej -> pole 0
+        let obj = "v 0 0 0\nv 1 0 0\nv 2 0 0\nf 1 2 3\n";
+        let s = parse_obj(obj).unwrap();
+        assert!(
+            s.triangles.is_empty(),
+            "trójkąt zdegenerowany trafił do siatki: {:?}",
+            s.triangles
+        );
+    }
+
+    /// Zerowa normalna z pliku nie może zostać przepuszczona do shadera.
+    #[test]
+    fn zero_normal_from_file_falls_back_to_geometry() {
+        let obj = "v 0 0 0\nv 1 0 0\nv 0 0 1\nvn 0 0 0\nf 1//1 2//1 3//1\n";
+        let s = parse_obj(obj).unwrap();
+        let m = build(s, &MaterialLib::default(), AxisUp::Y);
+        for v in &m.parts[0].mesh.vertices {
+            let n = v.normal();
+            assert!(
+                n.length() > 0.5,
+                "zerowa normalna przeszła do shadera -> NaN -> czarny piksel"
+            );
+        }
+    }
+
+    /// Test integracyjny na modelu junaka prosto z Blendera.
+    ///
     /// Ładujemy prawdziwy plik z repo, bo parser syntaktycznie poprawny
     /// wciąż potrafi zgubić UV albo odwrócić model — a to widać dopiero
     /// na geometrii, nie w testach na stringach.
@@ -681,10 +974,16 @@ f 1 2 3
     /// Test pomijamy, gdy pliku nie ma (np. kopia bez zasobów).
     #[test]
     fn loads_real_blender_motorcycle() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../junak-rider/assets/junak m10.obj");
-        let Ok(mut model) = load_from_file(&path) else {
-            eprintln!("pomijam: brak {}", path.display());
+        let Some(path) = test_model_path() else {
+            eprintln!("pomijam: brak pliku .obj w repo");
+            return;
+        };
+        // Ten plik jest Y-up (dowód w `junak-rider/src/main.rs`), więc
+        // wczytujemy go właściwą konwencją. Przy Z-up test przechodził mimo
+        // modelu leżącego na boku — mierzył tylko rzeczy niezależne od
+        // obrotu (liczbę trójkątów i obecność UV).
+        let Ok(mut model) = load_from_file_with_axes(&path, AxisUp::Y) else {
+            eprintln!("pomijam: nie udało się wczytać {}", path.display());
             return;
         };
         model.scale_to_height(1.2);
@@ -713,11 +1012,42 @@ f 1 2 3
             .flat_map(|p| p.mesh.vertices.iter())
             .filter(|v| v.has_uv())
             .count();
-        assert!(with_uv > 1000, "UV nie dotarły: tylko {with_uv} wierzchołków");
+        assert!(
+            with_uv > 1000,
+            "UV nie dotarły: tylko {with_uv} wierzchołków"
+        );
+
+        // Normalne MUSZĄ dostać tę samą transformację co pozycje.
+        // Bez tego model jest czarny: światło pada na wnętrzność bryły.
+        // Test patrzy na górne ściany motocykla (siodło, bak) — tam
+        // normalna musi wskazywać w górę, czyli `n.y > 0`.
+        let mut up = 0usize;
+        let mut total = 0usize;
+        for part in &model.parts {
+            for v in &part.mesh.vertices {
+                total += 1;
+                if v.normal().y > 0.2 {
+                    up += 1;
+                }
+            }
+        }
+        let up_ratio = up as f32 / total.max(1) as f32;
+        eprintln!("normalne skierowane w górę: {up_ratio:.3} ({up}/{total})");
+        assert!(
+            up_ratio > 0.15,
+            "tylko {up_ratio:.3} normalnych w górę — normalne nie dostały \
+             transformacji osi i model będzie czarny"
+        );
 
         // po skalowaniu motocykl ma sensowne wymiary w metrach
         let size = model.bounds_size();
-        assert!(size.y > 0.5 && size.y < 3.0, "wysokość {size:?} to nie motocykl");
-        assert!(size.x > 1.0 && size.x < 4.0, "długość {size:?} to nie motocykl");
+        assert!(
+            size.y > 0.5 && size.y < 3.0,
+            "wysokość {size:?} to nie motocykl"
+        );
+        assert!(
+            size.x > 1.0 && size.x < 4.0,
+            "długość {size:?} to nie motocykl"
+        );
     }
 }

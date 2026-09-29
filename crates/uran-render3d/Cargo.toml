@@ -9,3 +9,4 @@ uran-math.workspace = true
 glam.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
+uran-asset.workspace = true

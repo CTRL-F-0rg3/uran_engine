@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/*", "junak-rider",
+    "crates/*", "farm-simulator", "junak-rider",
     "uran-engine",   # <-- Zmienione z "engine"
     "uran-game",     # <-- Zmienione z "game"
     "uran-tanks",    # FPS z czołgami (renderer 3D)

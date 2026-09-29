@@ -9,6 +9,7 @@ use uran_render::{Scene3d, Scene3dTarget};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera3d;
+use crate::material::{MaterialBank, MaterialId};
 use crate::mesh::{GpuMesh, InstanceModel, Mesh, SceneUniform};
 use crate::postfx::PostFx;
 
@@ -24,6 +25,13 @@ pub struct DrawCmd {
     /// Mnożnik koloru wierzchołka — pozwala jedną siatkę malować na
     /// różne kolory (gracz / przeciwnik) bez duplikowania geometrii.
     pub tint: [f32; 4],
+    /// Materiał PBR: tekstury, chropowatość, metaliczność.
+    ///
+    /// Domyślnie `MaterialId(0)` — to zawsze istniejący materiał
+    /// zapasowy (biały, bez map). Dzięki niemu kod, który nie zna
+    /// pojęcia materiału (cały `uran-tanks`), nie musi go udawać
+    /// opcjonalnym i nie psuje się przy zmianie struktury komendy.
+    pub material: MaterialId,
 }
 
 impl DrawCmd {
@@ -32,11 +40,23 @@ impl DrawCmd {
             mesh,
             model,
             tint: [1.0; 4],
+            material: MaterialId(0),
         }
     }
 
     pub fn tinted(mesh: MeshId, model: Mat4, tint: [f32; 4]) -> Self {
-        Self { mesh, model, tint }
+        Self {
+            mesh,
+            model,
+            tint,
+            material: MaterialId(0),
+        }
+    }
+
+    /// Przypisuje materiał — np. ten, który przyszedł z pliku `.mtl`.
+    pub fn with_material(mut self, material: MaterialId) -> Self {
+        self.material = material;
+        self
     }
 }
 
@@ -46,6 +66,16 @@ pub struct Lighting {
     /// Kierunek, w którym świeci (wskazuje OD źródła).
     pub light_dir: Vec3,
     pub light_color: [f32; 3],
+    /// Natężenie słońca w przestrzeni LINIOWEJ.
+    ///
+    /// Światło liczymy liniowo, gdzie 1.0 to „biały" — czyli wartość
+    /// bliska 1 daje bardzo słabe słońce. Typowe słońce w bezchmurznym
+    /// dniu to 3..6, a zachód słońca 1.5..2.5.
+    ///
+    /// Dawniej shader mnożył światło przez stałą 1.35, co było
+    /// sprzężone z modelem Phonga; przy oświetleniu PBR i ACES ta
+    /// wartość zmieniała jasność inaczej na każdej powierzchni.
+    pub intensity: f32,
     pub ambient: [f32; 3],
 }
 
@@ -58,6 +88,10 @@ impl Default for Lighting {
             light_dir: Vec3::new(0.40, 0.62, 0.68),
             // Ciepłe, lekko złotawe — słońce niskiego popołudnia.
             light_color: [1.0, 0.93, 0.80],
+            // 4.0 = jasne popołudniowe słońce; z ACES w post-processingu
+            // daje to biel na białych powierzchniach i nie prześwietla
+            // asfaltu
+            intensity: 4.0,
             // Ambient NIESIE NIEBO: chłodny, wyraźnie niebieski. Podnosi
             // cienie do poziomu otoczenia, zamiast zostawiać je czarne.
             ambient: [0.30, 0.40, 0.58],
@@ -94,6 +128,8 @@ pub struct Renderer3d {
 
     pipeline: wgpu::RenderPipeline,
     meshes: Vec<GpuMesh>,
+    /// Materiały PBR i ich bind grupy (bind group 1 w potoku).
+    pub materials: MaterialBank,
 
     camera: Camera3d,
     lighting: Lighting,
@@ -150,6 +186,14 @@ impl Renderer3d {
 
         let bind_group = make_bind_group(&device, &layout, &scene_buffer, &models_buffer);
 
+        // Materialy PBR: layout z grupy 1. Bank tworzymy tu, bo
+        // `pipeline_layout` musi znać jego layout, a sam bank potrzebuje
+        // `device` i `queue`.
+        // Layout trzymamy w `Arc`, bo `wgpu::BindGroupLayout` nie
+        // implementuje `Clone` w wgpu 0.19.
+        let materials = MaterialBank::new(&device, &gpu.queue);
+        let materials_layout = std::sync::Arc::clone(&materials.layout);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Uran 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("s3d.wgsl").into()),
@@ -157,7 +201,7 @@ impl Renderer3d {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Uran 3D Pipeline Layout"),
-            bind_group_layouts: &[&layout],
+            bind_group_layouts: &[&layout, materials_layout.as_ref()],
             push_constant_ranges: &[],
         });
 
@@ -245,6 +289,7 @@ impl Renderer3d {
             postfx: PostFx::new(device, format, samples),
             pipeline,
             meshes: Vec::new(),
+            materials,
             camera: Camera3d::default(),
             lighting: Lighting::default(),
             clear_color: [0.45, 0.55, 0.68, 1.0],
@@ -286,6 +331,20 @@ impl Renderer3d {
         let id = MeshId(self.meshes.len() as u32);
         self.meshes.push(mesh.upload(&gpu.device, label));
         id
+    }
+
+    /// Rejestruje materiał PBR (tekstury + parametry) i zwraca jego
+    /// identyfikator.
+    ///
+    /// `gpu` podajemy jawnie z tego samego powodu co w [`Self::add_mesh`]:
+    /// renderer nie trzyma `Queue` w polach. Wczytanie PNG-a wymaga
+    /// kolejki, bo `write_texture` kopiuje piksele na kartę.
+    pub fn add_material(
+        &mut self,
+        gpu: &uran_render::GpuContext,
+        material: &crate::import::Material,
+    ) -> MaterialId {
+        self.materials.add(&gpu.device, &gpu.queue, material)
     }
 
     /// Podaje listę obiektów na bieżącą klatkę.
@@ -397,7 +456,9 @@ impl Renderer3d {
                 self.lighting.light_color[0],
                 self.lighting.light_color[1],
                 self.lighting.light_color[2],
-                0.0,
+                // `w` to natężenie — wcześniej było tu 0.0, przez co
+                // shader PBR liczył słońce o natężeniu zerowym
+                self.lighting.intensity,
             ],
             ambient_time: [c[0], c[1], c[2], self.time],
         };
@@ -470,6 +531,13 @@ impl Renderer3d {
                     // wgpu nie zna indeksów naszych siatek
                     continue;
                 };
+                // Bind grupy 1 = materiał. Musi być ustawiona PRZED
+                // draw, bo to osobny stan potoku: poprzednia komenda
+                // zostawiłaby tu swój materiał i obiekt zostałby
+                // pomalowany cudzym kolorem.
+                if let Some(bg) = self.materials.bind_group(cmd.material) {
+                    pass.set_bind_group(1, bg, &[]);
+                }
                 // `base_instance` = i+1, bo WGSL liczy `instance_index` od 1
                 mesh.draw(&mut pass, 0, i as u32 + 1);
                 drawn += 1;
