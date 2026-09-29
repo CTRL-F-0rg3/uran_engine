@@ -120,11 +120,6 @@ impl Player {
         self.pos + Vec2::new(BODY_W * 0.5, BODY_H * 0.5)
     }
 
-    /// Czy gracz jest teraz nietykalny (po trafieniu).
-    pub fn is_invulnerable(&self) -> bool {
-        self.invuln > 0.0
-    }
-
     /// Zadaje graczowi obrażenia i daje nietykalność.
     ///
     /// Nietykalność chroni przed „umieraniem" w klatce, w której
@@ -247,22 +242,30 @@ impl Player {
         }
 
         // --- oś Y ---
+        //
+        // Zapamiętujemy, czy **przed** ruchem gracz spadał. Bez tego
+        // nie odróżnilibyśmy lądowania od wznoszenia: po skoku stopi
+        // są w powietrzu, a pod nimi wciąż jest podłoga, więc test
+        // „czy coś jest pod stopami" dawałby fałszywe trafienie
+        // i gracz przyklejałby się do podłogi w miejscu skoku.
+        let falling = self.vel.y <= 0.0;
         let step_y = self.vel.y * dt;
         self.pos.y += step_y;
-        let falling = self.vel.y <= 0.0;
 
-        // Lądowanie sprawdzamy **przed** testem pełnych bloków: platforma
-        // nie jest pełnym blokiem, więc `overlaps_solid` jej nie widzi.
-        if falling && map.ground_below(self.rect(), 2.0) {
-            self.land(map);
-        } else if map.overlaps_solid(self.rect()) {
-            if falling {
-                self.land(map);
-            } else {
-                // Wznoszenie: głowa uderzyła w sufit.
+        if !falling {
+            // Wznoszenie: jedyny warunek to sufit (pełny blok).
+            // Platformy **nie** blokują od dołu — to ich sens.
+            if map.overlaps_solid(self.rect()) {
                 self.pos.y -= step_y;
                 self.vel.y = 0.0;
             }
+            self.grounded = false;
+            return;
+        }
+
+        // Spadanie: lądujemy, gdy pod stopami pojawił się kafel.
+        if map.ground_below(self.rect(), 2.0) || map.overlaps_solid(self.rect()) {
+            self.land(map);
         } else {
             self.grounded = false;
         }
@@ -334,6 +337,11 @@ mod tests {
     }
 
     /// Wykonuje `n` klatek z danym wejściem.
+    ///
+    /// `jump` to **wciśnięcie** (edge). Przytrzymanie ustawiamy
+    /// osobno przez `held`, bo skok zmiennej wysokości ucina wznoszenie
+    /// przy puszczeniu — test z samym edge'em widziałby skok o połowę
+    /// niższy niż w prawdziwej grze.
     fn step_n(
         p: &mut Player,
         n: usize,
@@ -343,7 +351,7 @@ mod tests {
         cfg: &PlayerConfig,
     ) {
         for _ in 0..n {
-            p.step(DT, move_x, jump, jump, map, cfg);
+            p.step(DT, move_x, jump, false, map, cfg);
         }
     }
 
@@ -398,11 +406,39 @@ mod tests {
         p.step(DT, 0.0, true, true, &map, &cfg);
         assert!(p.vel.y > 0.0, "skok nie nadał prędkości");
         assert!(!p.grounded, "gracz jest w powietrzu");
-        let mut peak = p.pos.y;
-        step_n(&mut p, 120, 0.0, false, &map, &cfg);
-        peak = peak.max(p.pos.y);
-        assert!(peak > TILE + TILE * 1.5, "skok za niski: {peak}");
+        let start = p.pos.y;
+        let mut peak = start;
+        // Przytrzymujemy klawisz — inaczej skok zmiennej wysokości
+        // ucina wznoszenie i test widziałby za niski szczyt. Wciśnięcie
+        // (`i == 0`) to **edge**: powtarzane co klatkę odnawiałoby skok
+        // w locie, co jest błędem, a nie cechą skoku.
+        for i in 0..120 {
+            p.step(DT, 0.0, i == 0, true, &map, &cfg);
+            peak = peak.max(p.pos.y);
+        }
+        // `jump_speed² / 2 * gravity` ≈ 104 px ≈ 3,2 kafla.
+        assert!(
+            peak - start > TILE * 2.5,
+            "skok za niski: {start} -> {peak}"
+        );
         assert!(p.grounded, "gracz nie wylądował");
+    }
+
+    #[test]
+    fn releasing_jump_early_makes_a_shorter_hop() {
+        let (mut p, cfg) = standing();
+        let map = flat_map();
+        let start = p.pos.y;
+        // Naciskamy i **puszczamy** natychmiast.
+        p.step(DT, 0.0, true, false, &map, &cfg);
+        let mut peak = p.pos.y;
+        for _ in 0..120 {
+            p.step(DT, 0.0, false, false, &map, &cfg);
+            peak = peak.max(p.pos.y);
+        }
+        // Krótki skok jest wyraźnie niższy niż pełny (sprawdzamy
+        // niżej) — tu pilnujemy tylko, że w ogóle wznosi.
+        assert!(peak > start + 2.0, "puszczony skok to nie skok");
     }
 
     #[test]

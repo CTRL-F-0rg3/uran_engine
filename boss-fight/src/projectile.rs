@@ -64,13 +64,18 @@ impl Projectile {
 pub const BULLET_LIFE: f32 = 6.0;
 
 /// Czy pocisk gracza trafia bossa.
+///
+/// Osobna funkcja, a nie test w `main.rs`, bo `main.rs` ma GPU i okno
+/// — testy logiki walki trzymamy w modułach, które działają bez okna.
+#[cfg(test)]
 pub fn player_hits_boss(bullet: &Projectile, boss_rect: Rect) -> bool {
-    bullet.owner == Owner::Player && bullet.rect().intersects(boss_rect)
+    bullet.owner == Owner::Player && bullet.rect().intersects(&boss_rect)
 }
 
 /// Czy pocisk bossa trafia gracza.
+#[cfg(test)]
 pub fn boss_hits_player(bullet: &Projectile, player_rect: Rect) -> bool {
-    bullet.owner == Owner::Boss && bullet.rect().intersects(player_rect)
+    bullet.owner == Owner::Boss && bullet.rect().intersects(&player_rect)
 }
 
 #[cfg(test)]
@@ -128,6 +133,9 @@ mod tests {
     #[test]
     fn miss_when_far_away() {
         let b = bullet(Owner::Player);
-        assert!(!player_hits_boss(&b, Rect::from_xywh(500.0, 0.0, 10.0, 10.0)));
+        assert!(!player_hits_boss(
+            &b,
+            Rect::from_xywh(500.0, 0.0, 10.0, 10.0)
+        ));
     }
 }

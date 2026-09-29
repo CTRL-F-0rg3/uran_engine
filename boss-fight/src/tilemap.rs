@@ -25,8 +25,13 @@ use uran_math::{Rect, Vec2};
 pub const TILE: f32 = 32.0;
 
 /// Szerokość mapy w kaflach.
-pub const MAP_W: usize = 60;
-/// Wysokość mapy w kaflach.
+///
+/// **40 × `TILE` = 1280 = szerokość okna**, więc przy `fit_world`
+/// zoom wynosi dokładnie 1,0 i 1 kafel = 1 piksel. To nie przypadek:
+/// arena o proporcjach 2,7:1 przy oknie 16:9 zostawiałaby szerokie
+/// puste pasy po bokach, a boss i pociski byłyby maleńkie.
+pub const MAP_W: usize = 40;
+/// Wysokość mapy w kaflach (22 × 32 = 704, mieści się w 720 px).
 pub const MAP_H: usize = 22;
 
 /// Rodzaj kafla.
@@ -88,19 +93,13 @@ impl TileMap {
         Rect::from_xywh(x as f32 * TILE, y as f32 * TILE, TILE, TILE)
     }
 
-    /// Czy punkt leży na pewnym pełnym kaflu.
-    pub fn blocked_at_point(&self, p: Vec2) -> bool {
-        self.at((p.x / TILE).floor() as i32, (p.y / TILE).floor() as i32).is_solid()
-    }
-
     /// Czy prostokąt gracza styka się z jakimś pełnym blokiem.
     pub fn overlaps_solid(&self, r: Rect) -> bool {
         let cx0 = (r.min.x / TILE).floor() as i32;
         let cy0 = (r.min.y / TILE).floor() as i32;
         let cx1 = (r.max.x / TILE).floor() as i32;
         let cy1 = (r.max.y / TILE).floor() as i32;
-        (cy0..=cy1)
-            .any(|cy| (cx0..=cx1).any(|cx| self.at(cx, cy).is_solid()))
+        (cy0..=cy1).any(|cy| (cx0..=cx1).any(|cx| self.at(cx, cy).is_solid()))
     }
 
     /// Czy na prostokącie gracza jest **koliec** (raniący).
@@ -234,5 +233,31 @@ mod tests {
         let m = map_with_block();
         assert!(m.is_below_world(Vec2::new(10.0, -TILE * 3.0)));
         assert!(!m.is_below_world(Vec2::new(10.0, 100.0)));
+    }
+
+    #[test]
+    fn world_aspect_matches_the_window() {
+        // Regression: arena 60×22 dawała proporcje 2,7:1 przy oknie
+        // 16:9, więc `fit_world` zostawiał szerokie puste pasy, a boss
+        // i pociski były ledwo widoczne. Wymagamy, żeby świat mieścił
+        // się w oknie bez pustych pasów po bokach.
+        let world = Vec2::new(MAP_W as f32 * TILE, MAP_H as f32 * TILE);
+        let window = Vec2::new(1280.0, 720.0);
+        // Zoom z `fit_world` to mniejszy z dwóch współczynników.
+        let zoom = (window.x / world.x).min(window.y / world.y);
+        // Widoczny obszar nie może być szerszy niż świat o więcej niż
+        // 2% — inaczej w kadrze są puste kolumny.
+        let visible_w = window.x / zoom;
+        assert!(
+            visible_w <= world.x * 1.02,
+            "widoczna szerokość {visible_w} >> świat {}",
+            world.x
+        );
+        // A w pionie świat musi się zmieścić, bo kamera pokazuje
+        // całą arenę naraz.
+        assert!(
+            visible_w * (world.y / world.x) <= window.y * 1.02,
+            "wysokość świata nie mieści się w oknie"
+        );
     }
 }

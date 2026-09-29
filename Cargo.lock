@@ -159,6 +159,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "boss-fight"
+version = "0.1.0"
+dependencies = [
+ "uran-engine",
+ "uran-math",
+ "uran-render",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

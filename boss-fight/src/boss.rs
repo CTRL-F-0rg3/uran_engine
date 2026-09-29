@@ -119,9 +119,7 @@ pub struct Boss {
     pub timer: f32,
     /// Ile seksekund trwa bieżący atak.
     pub attack_time: f32,
-    /// Czy boss właśnie się wychylił przed atakiem.
-    pub telegraph: bool,
-    /// Wychył: ile zostało do wychyłu (s), ujemne = wychył trwa.
+    /// Wychył: ile zostało do wychyłu (s). Zerowe = brak wychyłu.
     pub windup: f32,
     /// Czy boss zmierza do gracza (charge).
     pub charging: bool,
@@ -134,6 +132,14 @@ pub struct Boss {
 }
 
 impl Boss {
+    /// Czy boss właśnie się wychyla przed atakiem.
+    ///
+    /// Osobny bool trzymany w strukturze rozjeżdżałby się z
+    /// `windup` w dwa miejsca; stan czytamy z jednego źródła.
+    pub fn winding(&self) -> bool {
+        self.windup > 0.0
+    }
+
     pub fn new(pos: Vec2, cfg: &BossConfig) -> Self {
         Self {
             pos,
@@ -143,7 +149,6 @@ impl Boss {
             attack: Attack::Idle,
             timer: 1.5,
             attack_time: 0.0,
-            telegraph: false,
             windup: 0.0,
             charging: false,
             rng: Rng::new(0xC0FFEE),
@@ -194,11 +199,7 @@ impl Boss {
         // Wagi: (atak, waga). Suma wag w danej fazie bywa różna —
         // to zamierzone, względne wagi wystarczą.
         let pool: &[(Attack, u32)] = match phase {
-            1 => &[
-                (Attack::Fan, 5),
-                (Attack::GroundSlam, 3),
-                (Attack::Rain, 2),
-            ],
+            1 => &[(Attack::Fan, 5), (Attack::GroundSlam, 3), (Attack::Rain, 2)],
             2 => &[
                 (Attack::Fan, 4),
                 (Attack::GroundSlam, 3),
@@ -230,13 +231,7 @@ impl Boss {
     /// jest celowe: [`Boss`] zostaje czystym typem skopiowalnym
     /// (`Copy`), a stan świata — pociski — żyje w `Game`. Dzięki temu
     /// testy bossa nie potrzebują świata ani renderer.
-    pub fn step(
-        &mut self,
-        dt: f32,
-        player_pos: Vec2,
-        cfg: &BossConfig,
-        out: &mut Vec<Projectile>,
-    ) {
+    pub fn step(&mut self, dt: f32, player_pos: Vec2, cfg: &BossConfig, out: &mut Vec<Projectile>) {
         if self.dead {
             self.death_time += dt;
             return;
@@ -333,14 +328,7 @@ pub const CHARGE_SPEED: f32 = 330.0;
 pub const WINDUP_TIME: f32 = 0.65;
 
 /// Buduje pocisk bossa wychodzący z jego środka.
-fn spawn(
-    out: &mut Vec<Projectile>,
-    from: Vec2,
-    dir: Vec2,
-    speed: f32,
-    damage: f32,
-    size: f32,
-) {
+fn spawn(out: &mut Vec<Projectile>, from: Vec2, dir: Vec2, speed: f32, damage: f32, size: f32) {
     out.push(Projectile {
         pos: from,
         vel: dir.normalize_or_zero() * speed,
@@ -390,14 +378,7 @@ impl Boss {
                 for _ in 0..3 {
                     let x = player_pos.x + self.rng.range(-260.0, 260.0);
                     let y = player_pos.y + self.rng.range(220.0, 380.0);
-                    spawn(
-                        out,
-                        Vec2::new(x, y),
-                        Vec2::new(0.0, -1.0),
-                        300.0,
-                        9.0,
-                        10.0,
-                    );
+                    spawn(out, Vec2::new(x, y), Vec2::new(0.0, -1.0), 300.0, 9.0, 10.0);
                 }
             }
 
@@ -433,14 +414,7 @@ impl Boss {
                 let base = (self.rng.f32() * 6.0) as f32;
                 for k in 0..2 {
                     let a = base + t * 5.0 + k as f32 * std::f32::consts::PI;
-                    spawn(
-                        out,
-                        origin,
-                        Vec2::new(a.cos(), a.sin()),
-                        190.0,
-                        7.0,
-                        9.0,
-                    );
+                    spawn(out, origin, Vec2::new(a.cos(), a.sin()), 190.0, 7.0, 9.0);
                 }
             }
         }
@@ -498,10 +472,13 @@ mod tests {
     #[test]
     fn damage_lowers_hp_and_changes_phase() {
         let (mut b, cfg) = boss();
+        // Zdrowie spada do **dokładnie** 50%: poniżej progu fazy 2
+        // (0,66), powyżej progu fazy 3 (0,33). Procenty mnożymy
+        // przez `max_hp`, bo `take_damage` liczy w punktach.
         b.take_damage(cfg.max_hp * 0.5, &cfg);
-        assert!(b.hp < cfg.max_hp);
-        assert!(!b.is_dead(), "boss nie może umrzeć w połowie");
-        b.take_damage(cfg.max_hp * 0.2, &cfg);
+        let ratio = b.hp_ratio(&cfg);
+        assert!(ratio < cfg.phase2_at, "test nie doszedł do progu: {ratio}");
+        assert!(ratio > cfg.phase3_at, "test spadł do fazy 3: {ratio}");
         b.step(DT, Vec2::ZERO, &cfg, &mut Vec::new());
         assert_eq!(b.phase, 2, "boss nie wszedł w fazę 2");
     }
