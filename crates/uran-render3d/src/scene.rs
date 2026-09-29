@@ -170,7 +170,9 @@ impl Renderer3d {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<crate::mesh::Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    // pozycja, normalna, kolor — trzy float3 pod rząd
+                    // Kolejność musi być identyczna z `Vertex`: pozycja,
+                    // normalna, UV, kolor. Offsety liczymy ręcznie, bo
+                    // `#[repr(C)]` daje 44 B bez wypełnienia.
                     attributes: &[
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x3,
@@ -183,8 +185,13 @@ impl Renderer3d {
                             shader_location: 1,
                         },
                         wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
+                            format: wgpu::VertexFormat::Float32x2,
                             offset: 24,
+                            shader_location: 3,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 32,
                             shader_location: 2,
                         },
                     ],

@@ -3,4 +3,13 @@ name = "junak-rider"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "junak-rider"
+path = "src/main.rs"
+
 [dependencies]
+uran-engine.workspace = true
+uran-render.workspace = true
+uran-render3d.workspace = true
+uran-math.workspace = true
+wgpu.workspace = true

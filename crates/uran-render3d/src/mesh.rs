@@ -4,27 +4,46 @@ use bytemuck::{Pod, Zeroable};
 use uran_math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-/// Wierzchołek siatki: pozycja, normalna, kolor.
+/// Wierzchołek siatki: pozycja, normalna, UV, kolor.
 ///
-/// UV świadomie pomijamy — nie ma jeszcze tekstur, a każde dodatkowe
-/// 16 B na wierzchołek to mniej żołnierzy w buforze.
+/// ## Dlaczego UV jest tutaj, a nie osobny bufor
+///
+/// Tekstury wczytujemy z plików modeli (`.obj` z UV z Blendera), więc
+/// UV musi docierać do shadera dla KAŻDEJ siatki. Trzymanie go w tym
+/// samym `Vertex` oznacza jeden bufor wierzchołków i brak dodatkowych
+/// powiązań; cena to 8 B na wierzchołek, co przy 30 tys. wierzchołków
+/// motocykla daje ok. 240 kB — mniej niż jedna tekstura 1k.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    /// Współrzędne tekstury 0..1.
+    pub uv: [f32; 2],
     pub color: [f32; 3],
 }
 
 impl Vertex {
-    /// Wierzchołek o pozycji i kolorze.
+    /// Wierzchołek o pozycji i kolorze, bez tekstury.
     ///
     /// Normalną trzeba ustawić świadomie — „normalna = pozycja" daje
-    /// złe oświetlenie i cicho psuje wygląd bryły.
+    /// złe oświetlenie i cicho psuje wygląd bryły. UV dostaje (0,0),
+    /// czyli brak tekstury: shader i tak użyje koloru wierzchołka.
     pub fn new(position: Vec3, normal: Vec3, color: [f32; 3]) -> Self {
         Self {
             position: position.to_array(),
             normal: normal.to_array(),
+            uv: [0.0, 0.0],
+            color,
+        }
+    }
+
+    /// Wierzchołek z teksturą — używane przez importer modeli.
+    pub fn new_uv(position: Vec3, normal: Vec3, uv: [f32; 2], color: [f32; 3]) -> Self {
+        Self {
+            position: position.to_array(),
+            normal: normal.to_array(),
+            uv,
             color,
         }
     }
@@ -35,6 +54,14 @@ impl Vertex {
 
     pub fn normal(&self) -> Vec3 {
         Vec3::from_array(self.normal)
+    }
+
+    /// Czy wierzchołek ma niezerowe UV.
+    ///
+    /// Używane przy decyzji, czy siatka w ogóle potrzebuje tekstury —
+    /// geometria budowana w kodzie (tanki, droga) nie ma.
+    pub fn has_uv(&self) -> bool {
+        self.uv != [0.0, 0.0]
     }
 }
 
@@ -246,8 +273,11 @@ mod tests {
     }
 
     #[test]
-    fn vertex_is_36_bytes_and_uniform_is_aligned() {
-        assert_eq!(std::mem::size_of::<Vertex>(), 36);
+    fn vertex_is_44_bytes_and_uniform_is_aligned() {
+        // 3 pozycja + 3 normalna + 2 UV + 3 kolor = 11 * 4 B = 44 B.
+        // Rozmiar jest częścią kontraktu z `VertexBufferLayout` w potoku —
+        // zmiana jednego bez drugiego psuje renderowanie po cichu.
+        assert_eq!(std::mem::size_of::<Vertex>(), 44);
         assert_eq!(std::mem::size_of::<InstanceModel>(), 80);
         assert_eq!(std::mem::size_of::<SceneUniform>() % 16, 0);
     }
