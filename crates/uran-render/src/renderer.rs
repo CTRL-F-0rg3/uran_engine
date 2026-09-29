@@ -552,6 +552,7 @@ impl Renderer {
         // 5a) symulacja jednostek na GPU — compute w tym samym encoderze,
         // więc w tej samej klatce render pass widzi już nowe pozycje
         if let Some(sim) = &mut self.sim {
+            sim.poll_stats();
             sim.step(&mut encoder, &self.gpu.queue);
         }
 
@@ -583,22 +584,42 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            // faza rysowania — obie metody tylko odczytują stan renderera
-            stats.draw_calls += self.draw_sprites(&mut pass, list.sprites(), &mut stats);
-            stats.draw_calls += self.draw_meshes(&mut pass, list);
-
-            // armia symulowana na GPU — jeden draw call, pozycje czytane
-            // wprost z bufora jednostek (bez udziału CPU)
-            let world_globals = &self.globals_bind_group;
+            // Kolejność ma znaczenie dla czytelności:
+            //   1. armia z GPU (jest „pod" resztą sceny),
+            //   2. świat: sprite'y i siatki z listy rysowania,
+            //   3. HUD w przestrzeni ekranu.
+            //
+            // Armia musi być PRZED sprite'ami świata, inaczej 100k kółek
+            // zasłoniłoby teren; HUD zostaje na wierzchu, bo narysowany
+            // sprite'ami 2D i nie ma głębi.
             if let Some(sim) = &self.sim {
+                let world_globals = &self.globals_bind_group;
                 if let Some(n) = sim.draw(&mut pass, world_globals) {
                     stats.draw_calls += 1;
                     stats.instances += n;
                 }
             }
+            // faza rysowania — obie metody tylko odczytują stan renderera
+            stats.draw_calls += self.draw_sprites(&mut pass, list.sprites(), &mut stats);
+            stats.draw_calls += self.draw_meshes(&mut pass, list);
         }
 
         self.gpu.queue.submit(Some(encoder.finish()));
+
+        // Zmapowanie bufora statystyk DOPIERO po submicie — wcześniej
+        // walidacja wgpu odrzuca submit, bo bufor byłby zmapowany, a dopiero
+        // potem miał zostać zapisany przez `copy_buffer_to_buffer`.
+        if let Some(sim) = &mut self.sim {
+            sim.after_submit();
+        }
+
+        // Callback z `map_async` wywołuje wgpu dopiero przy `poll`. Bez tego
+        // statystyki nigdy nie dotarłyby z GPU i HUD pokazywałby zera.
+        // `Poll` nie czeka na GPU — tylko obsługuje callbacki, więc
+        // nie kosztuje przyszłego klatki.
+        self.gpu
+            .device
+            .poll(wgpu::Maintain::Poll);
 
         if std::env::var("URAN_DEBUG").is_ok() && self.frame_index <= 1 {
             eprintln!("[uran-render] okno={window_size:?}");

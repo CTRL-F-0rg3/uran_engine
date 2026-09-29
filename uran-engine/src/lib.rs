@@ -37,8 +37,11 @@ pub mod prelude {
     };
     pub use crate::math::{Color, Mat3, Rect, Vec2, Vec3, Vec4};
     pub use crate::render::{
-        Camera2d, DrawList, FrameStats, Graphics, MeshBuilder, Renderer, TextAlign,
+        Camera2d, DrawList, FrameStats, GpuSim, GpuUnit, Graphics, MeshBuilder, Renderer,
+        SimParams, SimStats, Team, TextAlign, UnitFlags,
     };
+    // Gry nie muszą zależeć od winit — przyciski myszy dostają z fasady.
+    pub use winit::event::MouseButton;
 
     /// Wygodny alias typowy dla uchwytów tekstur.
     pub type Texture = crate::asset::Handle<crate::asset::Image>;

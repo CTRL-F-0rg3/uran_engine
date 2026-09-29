@@ -200,6 +200,9 @@ pub struct SimParams {
     pub attack_cooldown: f32,
     /// Promień jednostki w jednostkach świata.
     pub unit_size: f32,
+    /// Padding: bez niego `#[repr(C)]` daje 92 B, a WGSL wymaga rozmiaru
+    /// będącego wielokrotnością 16 (96 B). Nieużywane, zawsze 0.
+    pub _pad1: f32,
 }
 
 impl Default for SimParams {
@@ -223,6 +226,7 @@ impl Default for SimParams {
             attack_damage: 10.0,
             attack_cooldown: 0.5,
             unit_size: 3.0,
+            _pad1: 0.0,
         }
     }
 }
@@ -291,14 +295,14 @@ mod tests {
         assert_eq!(size_of::<GpuUnit>(), 48);
         let u = GpuUnit::default();
         let base = &u as *const _ as usize;
-        let off = |p: *const f32| p as usize - base;
-        assert_eq!(off(&u.position[0] as *const f32), 0);
-        assert_eq!(off(&u.velocity[0] as *const f32), 8);
-        assert_eq!(off(&u.target[0] as *const f32), 16);
-        assert_eq!(off(&u.health as *const f32), 24);
-        assert_eq!(off(&u.cooldown as *const f32), 28);
-        assert_eq!(off(&u.flags as *const u32), 32);
-        assert_eq!(off(&u.seed as *const u32), 36);
+        let off = |p: *const u8| p as usize - base;
+        assert_eq!(off(&u.position[0] as *const f32 as *const u8), 0);
+        assert_eq!(off(&u.velocity[0] as *const f32 as *const u8), 8);
+        assert_eq!(off(&u.target[0] as *const f32 as *const u8), 16);
+        assert_eq!(off(&u.health as *const f32 as *const u8), 24);
+        assert_eq!(off(&u.cooldown as *const f32 as *const u8), 28);
+        assert_eq!(off(&u.flags as *const u32 as *const u8), 32);
+        assert_eq!(off(&u.seed as *const u32 as *const u8), 36);
     }
 
     #[test]
@@ -317,19 +321,22 @@ mod tests {
         assert_eq!(size_of::<SimParams>(), 96);
         let p = SimParams::default();
         let base = &p as *const _ as usize;
-        let off = |q: *const f32| q as usize - base;
-        assert_eq!(off(&p.arena_min[0] as *const f32), 0);
-        assert_eq!(off(&p.arena_max[0] as *const f32), 8);
-        assert_eq!(off(&p.player_pos[0] as *const f32), 48);
-        assert_eq!(off(&p.rally[0] as *const f32), 56);
-        assert_eq!(off(&p.max_speed as *const f32), 64);
-        assert_eq!(off(&p.unit_size as *const f32), 88);
+        let off = |q: *const u8| q as usize - base;
+        assert_eq!(off(&p.arena_min[0] as *const f32 as *const u8), 0);
+        assert_eq!(off(&p.arena_max[0] as *const f32 as *const u8), 8);
+        assert_eq!(off(&p.player_pos[0] as *const f32 as *const u8), 48);
+        assert_eq!(off(&p.rally[0] as *const f32 as *const u8), 56);
+        assert_eq!(off(&p.max_speed as *const f32 as *const u8), 64);
+        assert_eq!(off(&p.unit_size as *const f32 as *const u8), 88);
+        // padding końcowy — WGSL też musi go mieć
+        assert_eq!(off(&p._pad1 as *const f32 as *const u8), 92);
     }
 
     #[test]
     fn params_buffer_is_uniform_compatible() {
         // `uniform` bufory wymagają rozmiaru będącego wielokrotnością 16
         assert_eq!(size_of::<SimParams>() % 16, 0);
+        assert_eq!(size_of::<SimParams>(), 96, "WGSL liczy tyle samo bajtów");
         assert_eq!(align_of::<SimParams>(), 4);
     }
 

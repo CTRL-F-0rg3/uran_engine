@@ -9,6 +9,9 @@
 //
 // Pozycje nigdy nie wracają na CPU — jedynie cztery liczniki statystyk
 // są odczytywane asynchronicznie raz na kilka klatek.
+//
+// Uwaga na nazwy pól: `target` i `from` są zarezerwowanymi słowami
+// kluczowymi WGSL, dlatego struktury używają `goal` i `origin`.
 
 struct Params {
     arena_min: vec2<f32>,
@@ -29,12 +32,14 @@ struct Params {
     attack_damage: f32,
     attack_cooldown: f32,
     unit_size: f32,
+    // bez tego WGSL liczy 92 B, a `uniform` wymaga wielokrotności 16
+    _pad1: f32,
 }
 
 struct Unit {
     position: vec2<f32>,
     velocity: vec2<f32>,
-    target: vec2<f32>,
+    goal: vec2<f32>,
     health: f32,
     cooldown: f32,
     flags: u32,
@@ -53,8 +58,8 @@ struct Counters {
 @group(0) @binding(1) var<storage, read_write> units: array<Unit>;
 // siatka: dla komórki c słowo [c*STRIDE] to licznik, potem MAX_PER_CELL indeksów
 @group(0) @binding(2) var<storage, read_write> grid: array<atomic<u32>>;
-// obrażenia do zastosowania w przebiegu (atomowe — wielu strzelców
-// może trafić w tę samą jednostkę)
+// obrażenia do zastosowania (atomowe — wielu strzelców może trafić
+// w tę samą jednostkę)
 @group(0) @binding(3) var<storage, read_write> damage: array<atomic<u32>>;
 @group(0) @binding(4) var<storage, read_write> counters: Counters;
 
@@ -64,8 +69,8 @@ const ATTACKED: u32 = 4u;
 
 fn grid_stride() -> u32 { return 1u + MAX_PER_CELL; }
 fn total_cells() -> u32 { return params.grid_dim.x * params.grid_dim.y; }
-fn is_alive(u: Unit) -> bool { return (u.flags & ALIVE) != 0u; }
-fn is_enemy(u: Unit) -> bool { return (u.flags & TEAM_BIT) != 0u; }
+fn unit_alive(u: Unit) -> bool { return (u.flags & ALIVE) != 0u; }
+fn unit_enemy(u: Unit) -> bool { return (u.flags & TEAM_BIT) != 0u; }
 
 /// Indeks komórki siatki dla pozycji (z klamrowaniem do areny).
 fn cell_of(p: vec2<f32>) -> u32 {
@@ -82,6 +87,36 @@ fn hash01(v: u32) -> f32 {
     x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
     x = (x >> 22u) ^ x;
     return f32(x & 0x00ffffffu) / 16777215.0;
+}
+
+/// Indeks najbliższego wroga w zasięgu, albo `0xFFFFFFFF`.
+fn nearest_victim(origin: vec2<f32>, want_enemy: bool, range: f32) -> u32 {
+    let c = cell_of(origin);
+    let cx = c % params.grid_dim.x;
+    let cy = c / params.grid_dim.x;
+    var best = 0xFFFFFFFFu;
+    var best_d2 = range * range;
+    for (var oy = -1; oy <= 1; oy++) {
+        let ny = i32(cy) + oy;
+        if (ny < 0 || ny >= i32(params.grid_dim.y)) { continue; }
+        for (var ox = -1; ox <= 1; ox++) {
+            let nx = i32(cx) + ox;
+            if (nx < 0 || nx >= i32(params.grid_dim.x)) { continue; }
+            let base = (u32(ny) * params.grid_dim.x + u32(nx)) * grid_stride();
+            let n = min(atomicLoad(&grid[base]), MAX_PER_CELL);
+            for (var k = 0u; k < n; k++) {
+                let j = atomicLoad(&grid[base + 1u + k]);
+                if (j >= params.count) { continue; }
+                let o = units[j];
+                if (!unit_alive(o)) { continue; }
+                if (unit_enemy(o) != want_enemy) { continue; }
+                let delta = o.position - origin;
+                let d2 = dot(delta, delta);
+                if (d2 < best_d2) { best_d2 = d2; best = j; }
+            }
+        }
+    }
+    return best;
 }
 
 // --------------------------------------------------------- 1/2. zerowanie
@@ -104,7 +139,7 @@ fn build_grid(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if (i >= params.count) { return; }
     let u = units[i];
-    if (!is_alive(u)) { return; }
+    if (!unit_alive(u)) { return; }
 
     let base = cell_of(u.position) * grid_stride();
     let slot = atomicAdd(&grid[base], 1u);
@@ -115,55 +150,44 @@ fn build_grid(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-/// Indeks najbliższego wroga w zasięgu, albo `0xFFFFFFFF`.
-fn nearest_victim(from: vec2<f32>, want_enemy: bool, range: f32) -> u32 {
-    let c = cell_of(from);
-    let cx = c % params.grid_dim.x;
-    let cy = c / params.grid_dim.x;
-    var best = 0xFFFFFFFFu;
-    var best_d2 = range * range;
-    for (var oy = -1; oy <= 1; oy++) {
-        let ny = i32(cy) + oy;
-        if (ny < 0 || ny >= i32(params.grid_dim.y)) { continue; }
-        for (var ox = -1; ox <= 1; ox++) {
-            let nx = i32(cx) + ox;
-            if (nx < 0 || nx >= i32(params.grid_dim.x)) { continue; }
-            let base = (u32(ny) * params.grid_dim.x + u32(nx)) * grid_stride();
-            let n = min(atomicLoad(&grid[base]), MAX_PER_CELL);
-            for (var k = 0u; k < n; k++) {
-                let j = atomicLoad(&grid[base + 1u + k]);
-                if (j >= params.count) { continue; }
-                let o = units[j];
-                if (!is_alive(o)) { continue; }
-                if (is_enemy(o) != want_enemy) { continue; }
-                let delta = o.position - from;
-                let d2 = dot(delta, delta);
-                if (d2 < best_d2) { best_d2 = d2; best = j; }
-            }
-        }
-    }
-    return best;
-}
-
 // ---------------------------------------------------------------- 4. think
 @compute @workgroup_size(64)
 fn think(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if (i >= params.count) { return; }
     var u = units[i];
-    if (!is_alive(u)) { return; }
+    if (!unit_alive(u)) { return; }
 
-    let me = u.position;
-    let my_cell = cell_of(me);
-    let cx = my_cell % params.grid_dim.x;
-    let cy = my_cell / params.grid_dim.x;
+    let enemy = unit_enemy(u);
+    if (enemy) {
+        atomicAdd(&counters.alive_enemy, 1u);
+    } else {
+        atomicAdd(&counters.alive_friendly, 1u);
+    }
 
-    var push = vec2<f32>(0.0);
-    var enemy_pos = vec2<f32>(0.0);
-    var enemy_d2 = 1.0e30;
-    var saw_enemy = false;
+    // --- cel: najbliższy wróg w zasięgu, inaczej punkt zwołania
+    var goal = params.rally;
+    let victim = nearest_victim(u.position, !enemy, params.attack_range);
+    if (victim != 0xFFFFFFFFu && victim < params.count) {
+        goal = units[victim].position;
+        if (u.cooldown <= 0.0) {
+            atomicAdd(&damage[victim], u32(params.attack_damage * 1000.0));
+            atomicAdd(&counters.shots, 1u);
+            u.cooldown = params.attack_cooldown;
+            u.flags = u.flags | ATTACKED;
+        }
+    }
 
-    // przeglądamy 3x3 sąsiednich komórek
+    // --- ruch w stronę celu
+    var dir = goal - u.position;
+    let dist = length(dir);
+    if (dist > 0.001) { dir = dir / dist; } else { dir = vec2<f32>(0.0); }
+
+    // --- odpychanie od sąsiadów z 3x3 komórek
+    var push_dir = vec2<f32>(0.0);
+    let c = cell_of(u.position);
+    let cx = c % params.grid_dim.x;
+    let cy = c / params.grid_dim.x;
     for (var oy = -1; oy <= 1; oy++) {
         let ny = i32(cy) + oy;
         if (ny < 0 || ny >= i32(params.grid_dim.y)) { continue; }
@@ -175,107 +199,67 @@ fn think(@builtin(global_invocation_id) gid: vec3<u32>) {
             for (var k = 0u; k < n; k++) {
                 let j = atomicLoad(&grid[base + 1u + k]);
                 if (j == i || j >= params.count) { continue; }
-                let o = units[j];
-                if (!is_alive(o)) { continue; }
-                let delta = o.position - me;
+                let delta = u.position - units[j].position;
                 let d2 = dot(delta, delta);
-
-                // odpychanie od każdego sąsiada, niezależnie od drużyny
-                let r2 = params.separation_radius * params.separation_radius;
-                if (d2 < r2 && d2 > 0.0001) {
-                    push = push - delta * (1.0 / d2);
-                }
-                // zapamiętujemy najbliższego wroga
-                if (is_enemy(o) != is_enemy(u) && d2 < enemy_d2) {
-                    enemy_d2 = d2;
-                    enemy_pos = o.position;
-                    saw_enemy = true;
+                if (d2 > 0.00001 && d2 < params.separation_radius * params.separation_radius) {
+                    push_dir = push_dir - delta * (1.0 / d2);
                 }
             }
         }
     }
+    // szum: jednostki nie zjeżdżają się w jeden punkt
+    let jitter = (hash01(u.seed) - 0.5) * 0.25;
+    let ang = hash01(u.seed ^ 0x9E3779B9u) * 6.2831853;
+    let wobble = vec2<f32>(cos(ang), sin(ang)) * jitter;
 
-    // dokąd iść: do wroga, jeśli jakiś jest w okolicy, inaczej do celu
-    var goal = u.target;
-    if (saw_enemy) {
-        goal = enemy_pos;
-    }
-    let to_goal = goal - me;
-    let dist = length(to_goal);
-    var dir = vec2<f32>(0.0);
-    if (dist > 0.001) {
-        dir = to_goal / dist;
-    } else if (!saw_enemy) {
-        // stoi w miejscu i nie ma wroga — rozłóżmy go lekko,
-        // inaczej setki tysięcy jednostek zastyga w jednym punkcie
-        let ang = hash01(u.seed + u32(params.time * 60.0)) * 6.2831853;
-        dir = vec2<f32>(cos(ang), sin(ang));
-    }
+    // Odsuwanie NORMALIZUJEMY. Surowa suma `1/d2` rośnie bez ograniczeń
+    // w gęstej kolumnie i przy 40k żołnierzy dosłownie „wystrzeliwuje"
+    // wszystkich z formacji — armia rozlewa się po mapie. Po normalizacji
+    // odpychanie ma stałą wagę i da się je dobrać jednym parametrem.
+    let sep_len = length(push_dir);
+    var sep_dir = vec2<f32>(0.0);
+    if (sep_len > 0.0001) { sep_dir = push_dir / sep_len; }
 
-    let accel = dir * 900.0 + push * params.separation;
-    var vel = u.velocity + accel * params.dt;
-    let speed = length(vel);
-    if (speed > params.max_speed) {
-        vel = vel * (params.max_speed / speed);
-    }
-    u.velocity = vel;
+    var steering = dir + sep_dir * params.separation + wobble;
+    // steering ograniczamy do długości 1 — wychodzenie poza to oznaczałoby
+    // prędkość większą niż max_speed, a to nic nie daje
+    let sl = length(steering);
+    if (sl > 1.0) { steering = steering / sl; }
 
-    var pos = me + vel * params.dt;
-    // klamra do areny + odbicie od ściany
-    let r = params.unit_size;
-    if (pos.x < params.arena_min.x + r) { pos.x = params.arena_min.x + r; u.velocity.x = abs(u.velocity.x); }
-    if (pos.x > params.arena_max.x - r) { pos.x = params.arena_max.x - r; u.velocity.x = -abs(u.velocity.x); }
-    if (pos.y < params.arena_min.y + r) { pos.y = params.arena_min.y + r; u.velocity.y = abs(u.velocity.y); }
-    if (pos.y > params.arena_max.y - r) { pos.y = params.arena_max.y - r; u.velocity.y = -abs(u.velocity.y); }
+    let target_v = steering * params.max_speed;
+    // wygładzanie, żeby nie było szarpnięć
+    let v = mix(u.velocity, target_v, clamp(params.dt * 8.0, 0.0, 1.0));
+
+    var pos = u.position + v * params.dt;
+
+    // --- ograniczenia do areny (odpychanie od ścian)
+    let pad = params.unit_size;
+    let lo = params.arena_min + vec2<f32>(pad);
+    let hi = params.arena_max - vec2<f32>(pad);
+    pos = clamp(pos, lo, hi);
+
     u.position = pos;
-
-    // atak: tylko jeśli wróg jest w zasięgu
-    var attacked = false;
-    if (saw_enemy && dist <= params.attack_range) {
-        u.cooldown = u.cooldown - params.dt;
-        if (u.cooldown <= 0.0) {
-            let victim = nearest_victim(me, is_enemy(u), params.attack_range);
-            if (victim != 0xFFFFFFFFu) {
-                // obrażenia jako u32 w tysięcznych — atomowe, więc dwóch
-                // strzelców trafiających w cel nie nadpisuje się nawzajem
-                atomicAdd(&damage[victim], u32(max(params.attack_damage, 0.0) * 1000.0));
-                atomicAdd(&counters.shots, 1u);
-                attacked = true;
-            }
-            u.cooldown = params.attack_cooldown;
-        }
-    } else {
-        u.cooldown = max(u.cooldown, 0.0);
-    }
-
-    if (attacked) { u.flags = u.flags | ATTACKED; } else { u.flags = u.flags & ~ATTACKED; }
+    u.velocity = v;
+    u.goal = goal;
+    u.cooldown = max(u.cooldown - params.dt, 0.0);
     units[i] = u;
 }
 
-// --------------------------------------------------------------- 5. resolve
+// -------------------------------------------------------------- 5. resolve
 @compute @workgroup_size(64)
 fn resolve(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if (i >= params.count) { return; }
     var u = units[i];
-    if (!is_alive(u)) { return; }
+    if (!unit_alive(u)) { return; }
 
-    // liczniki statystyk (wyzerowane przez `clear_counters` na początku)
-    if (is_enemy(u)) {
-        atomicAdd(&counters.alive_enemy, 1u);
-    } else {
-        atomicAdd(&counters.alive_friendly, 1u);
+    let raw = atomicExchange(&damage[i], 0u);
+    if (raw > 0u) {
+        u.health = u.health - f32(raw) / 1000.0;
     }
-
-    // atomicExchange zeruje bufor, więc obrażenia nie kumulują się w nieskończoność
-    let dmg = atomicExchange(&damage[i], 0u);
-    if (dmg != 0u) {
-        u.health = u.health - f32(dmg) / 1000.0;
-        if (u.health <= 0.0) {
-            u.health = 0.0;
-            u.flags = u.flags & ~ALIVE;   // martwej nie rysujemy i nie liczymy
-            atomicAdd(&counters.kills, 1u);
-        }
+    if (u.health <= 0.0) {
+        u.flags = u.flags & ~ALIVE;
+        atomicAdd(&counters.kills, 1u);
     }
     units[i] = u;
 }

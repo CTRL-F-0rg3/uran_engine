@@ -349,7 +349,7 @@ impl ApplicationHandler for AppState {
             Ok(mut renderer) => {
                 // Symulacja GPU alokuje bufory raz, przy starcie — dlatego
                 // robimy to zanim pierwsza klatka przejdzie przez `tick`.
-                if let Some(capacity) = gpu_sim_units {
+                if let Some(capacity) = self.gpu_sim_units {
                     renderer.enable_gpu_sim(capacity);
                     println!(
                         "🖥  symulacja GPU: bufor na {capacity} jednostek ({:.1} MB)",

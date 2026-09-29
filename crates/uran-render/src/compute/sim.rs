@@ -122,7 +122,11 @@ pub struct GpuSim {
 
     stats: SimStats,
     readback: StatsReadback,
+    /// Licznik klatek — od niego zależy, kiedy robimy odczyt statystyk.
     frame: u64,
+    /// Kopia liczników jest nagrana w encoderze, ale jeszcze nie zmapowana.
+    /// `map_async` wołamy dopiero po `queue.submit` (patrz `after_submit`).
+    pending_readback: bool,
 }
 
 fn binding(idx: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -306,6 +310,7 @@ impl GpuSim {
             stats: SimStats::default(),
             readback: StatsReadback::Idle,
             frame: 0,
+            pending_readback: false,
         }
     }
 
@@ -428,7 +433,15 @@ impl GpuSim {
         dispatch(encoder, &self.resolve, units_groups);
 
         self.frame += 1;
-        if self.frame % STATS_INTERVAL == 0 {
+        // Kopię nagrywamy tylko wtedy, gdy poprzedni odczyt się zakończył —
+        // inaczej nadpisalibyśmy bufor w trakcie, gdy jest zmapowany.
+        if self.frame % STATS_INTERVAL == 0
+            && matches!(self.readback, StatsReadback::Idle)
+        {
+            // WAŻNE: `map_async` WOLNO zawołać dopiero PO `queue.submit`.
+            // Gdybyśmy zmapowali bufor tu, walidacja wgpu odrzuci submit,
+            // bo `readback_buffer` byłby w tym momencie zmapowany, a dopiero
+            // potem miał zostać zapisany przez `copy_buffer_to_buffer`.
             encoder.copy_buffer_to_buffer(
                 &self.counters_buffer,
                 0,
@@ -436,12 +449,17 @@ impl GpuSim {
                 0,
                 std::mem::size_of::<Counters>() as u64,
             );
-            self.start_readback();
+            self.pending_readback = true;
         }
     }
 
-    /// Zaczyna asynchroniczny odczyt statystyk (nie blokuje wątku głównego).
-    fn start_readback(&mut self) {
+    /// Wywoływane tuż po `queue.submit` — dopiero teraz możemy zmapować
+    /// bufor ze statystykami i zacząć asynchroniczny odczyt.
+    pub fn after_submit(&mut self) {
+        if !self.pending_readback {
+            return;
+        }
+        self.pending_readback = false;
         if !matches!(self.readback, StatsReadback::Idle) {
             return; // poprzedni odczyt jeszcze w locie
         }
@@ -482,10 +500,12 @@ impl GpuSim {
         }
     }
 
-    /// Rysuje wszystkie jednostki jednym `draw_indexed`.
+    /// Rysuje wszystkie jednostki jednym `draw` (6 wierzchołków na instancję).
     ///
     /// `globals_bind_group` musi wskazywać na macierz świata; pozycje
     /// czytane są wprost z bufora jednostek w shaderze wierzchołkowym.
+    /// Świadomie NIE używamy `draw_indexed` — nie mamy index buffera,
+    /// a dwie trójkąty składamy z sześciu wierzchołków w shaderze.
     pub fn draw<'a>(
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
@@ -499,8 +519,8 @@ impl GpuSim {
         pass.set_bind_group(0, globals_bind_group, &[]);
         pass.set_bind_group(1, &self.draw_style_bind_group, &[]);
         pass.set_bind_group(2, &self.draw_bind_group, &[]);
-        // 6 indeksów na jednostkę; martwe zwijamy do zdegenerowanego trójkąta
-        pass.draw_indexed(0..6, 0, 0..count);
+        // 6 wierzchołków na jednostkę; martwe zwijamy do zdegenerowanego trójkąta
+        pass.draw(0..6, 0..count);
         Some(count as usize)
     }
 }
@@ -622,11 +642,17 @@ fn build_draw_pipeline(
 }
 
 /// Wstawia stałą `MAX_PER_CELL` do WGSL i zwraca źródło shadera symulacji.
+///
+/// Podstawienie zamiast `const` w WGSL: stała zależy od limitów
+/// zdefiniowanych po stronie Rusta, więc musi być wstrzyknięta do tekstu.
+///
+/// Sufiks `u` jest tu KRYTYCZNY. Naga typuje literały WGSL jako `i32`,
+/// a `min(atomic<u32>, i32)` jest błędne — walidacja shadera pada z
+/// „Argument [1] to Min has an invalid type". Dlatego wstrzykujemy
+/// `8u`, a nie `8`.
 fn sim_shader_source() -> String {
     let src = include_str!("sim.wgsl");
-    // Podstawienie zamiast `const` w WGSL: stała zależy od limitów
-    // zdefiniowanych po stronie Rusta, więc musi być wstrzyknięta do tekstu.
-    src.replace("MAX_PER_CELL", &MAX_PER_CELL.to_string())
+    src.replace("MAX_PER_CELL", &format!("{MAX_PER_CELL}u"))
 }
 
 fn units_shader_source() -> String {

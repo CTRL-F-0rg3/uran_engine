@@ -413,8 +413,11 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
     let Some(font) = game.font else { return };
     ctx.gfx.screen_space().layer(100);
 
-    // --- piechota symulowana na GPU ---
-    game.infantry.draw_hud(ctx);
+    // --- piechota symulowana na GPU (liczniki z async readbacku) ---
+    // Wywołujemy ją tu, w wydzielonym `draw_hud`, bo potrzebuje czcionki
+    // gry; statystyki GPU wracają z opóźnieniem, więc HUD nie musi
+    // być aktualizowany co klatkę.
+    game.infantry.draw_hud(ctx, font, size);
     ctx.gfx.screen_space().layer(100);
 
     // --- pasek zdrowia ---
@@ -451,6 +454,9 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
     let fps = ctx.time.fps();
     let ms = ctx.time.delta_millis();
     let draw_calls = ctx.gfx.draw_calls();
+    // --- armia: liczniki z GPU (statystyki wracają asynchronicznie,
+    // więc mogą być kilka klatek stare) — rysowane w `draw_hud` ---
+
     ctx.gfx.color(Color::from_hex(0x7A8AA5)).draw_text(
         font,
         &format!("{fps:.0} FPS   {ms:.1} ms   {draw_calls} wywołań rysowania"),
@@ -499,10 +505,13 @@ fn draw_hud(ctx: &mut Ctx, game: &Game) {
             TextAlign::Center,
         );
     } else {
+        // Podpowiedź sterowania idzie POD statystykami piechoty (Y=58 i
+        // Y=80 w `Infantry::draw_hud`) i POD licznikiem FPS (Y=34).
+        // Wszystkie trzy na Y=34 nachodziłyby na siebie.
         ctx.gfx.color(Color::from_hex(0x6C7A90)).draw_text(
             font,
             "WASD — ruch    mysz — celowanie    LPM — strzał    P — pauza    R — restart",
-            Vec2::new(size.x * 0.5, 34.0),
+            Vec2::new(size.x * 0.5, 102.0),
             16.0,
             TextAlign::Center,
         );
@@ -548,8 +557,8 @@ fn setup(ctx: &mut Ctx, game: &mut Game) {
     // --- armia piechoty na GPU ---
     // Armia jest alokowana raz (`.gpu_sim_units`), a tutaj wgrywamy ją
     // w poszczególne sloty. Od tej chwili pozycje już nigdy nie wracają na CPU.
-    if let Some(sim) = ctx.sim.as_deref_mut() {
-        game.infantry.install(sim, ctx.queue(), ARENA);
+    if !game.infantry.install(ctx, ARENA) {
+        eprintln!("⚠️  symulacja GPU wyłączona — demo leci bez piechoty");
     }
 
     // kamera pokazuje całą arenę
