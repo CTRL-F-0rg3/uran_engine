@@ -10,7 +10,7 @@ use uran_render::{Scene3d, Scene3dTarget};
 use crate::camera::Camera3d;
 use crate::material::{MaterialBank, MaterialId};
 use crate::mesh::{GpuMesh, InstanceModel, Mesh, SceneUniform};
-use crate::postfx::PostFx;
+use crate::postfx::{PostFx, PostSettings};
 use crate::shadow::{SceneBounds, ShadowMap, ShadowSettings};
 
 /// Identyfikator siatki w rejestrze renderera.
@@ -99,6 +99,77 @@ impl Default for Lighting {
     }
 }
 
+/// Parametry hybrydy PBR + NPR — miara „rysunkowości" sceny.
+///
+/// To jest globalna skala, do której mnożymy stylizację z materiału
+/// (`Surface::stylize`). Dzięki temu jedna scena może mieć rysunkową
+/// postać i fizyczne otoczenie: materiał mówi „chcę tu rampę", a ten
+/// parametr mówi „na ile mocno".
+///
+/// Przy `0.0` zachowanie jest czyste PBR. Wartość domyślna to `1.0`,
+/// bo to gra decyduje, ile rysunkowości chce — nie renderer.
+#[derive(Debug, Clone, Copy)]
+pub struct Stylization {
+    /// Globalna siła rampy anime 0..1.
+    pub amount: f32,
+    /// Miękkość progu terminatora. Małe = ostrzejszy rysunek.
+    pub softness: f32,
+    /// Globalna siła podpowierzchniowego rozpraszania (mnoży tę z materiału).
+    pub sss: f32,
+}
+
+impl Default for Stylization {
+    fn default() -> Self {
+        Self {
+            // 1.0 = materiał decyduje w pełni. Ustawienie 0.0 byłoby
+            // „czyste PBR zawsze", a to odbierałoby grze narzędzie.
+            amount: 1.0,
+            // 0.12 to rampa wyraźnie widoczna, ale z gradientem szerokości
+            // kilku stopni. Poniżej 0.05 krawędź zaczyna migotać przy
+            // ruchu kamery.
+            softness: 0.12,
+            sss: 1.0,
+        }
+    }
+}
+
+/// Mgła i niebo — atmosfera sceny.
+#[derive(Debug, Clone, Copy)]
+pub struct Atmosphere {
+    /// Czy rysować fizyczne niebo (Rayleigh + Mie).
+    ///
+    /// Gdy `false`, kadr wypełnia [`Renderer3d::set_clear_color`], a mgła
+    /// nadal działa. To pozwala grze przełączać „wewnętrzna hala" (brak
+    /// nieba) i „pod gołym niebem" jednym wywołaniem.
+    pub sky: bool,
+    /// Gęstość mgły 0..1 — odpowiada za `1 - e^(-d·ρ)`.
+    ///
+    /// 0.004 daje mgłę widoczną od ~150 m; 0.012 zaczyna zasłaniać
+    /// odległe budynki. Powyżej 0.03 scena znika całkowicie.
+    pub fog_density: f32,
+    /// Kolor mgły w sRGB, zakres 0..1.
+    ///
+    /// Niebo wzmacnia go w kierunku słońca (rozpraszanie Mie), więc
+    /// podstawowy kolor można ustawić neutralnie i nieba nie trzeba
+    /// przeliczać ręcznie.
+    pub fog_color: [f32; 3],
+}
+
+impl Default for Atmosphere {
+    fn default() -> Self {
+        Self {
+            sky: true,
+            // 0.0045 = mgła ledwo widoczna na dystansie kilkudziesięciu
+            // metrów. Wyższa wartość zjadała czytelność sylwetek
+            // przeciwników, co w grze akcji jest niepożądane.
+            fog_density: 0.0045,
+            // Lekko chłodna, pasująca do niebieskiego ambientu. Ciepła mgła
+            // przy zimnym otoczeniu wygląda jak brud na obiektywie.
+            fog_color: [0.58, 0.70, 0.86],
+        }
+    }
+}
+
 /// Renderer 3D — implementacja [`Scene3d`].
 ///
 /// Świadomie NIE trzymamy `Device`/`Queue` w polach. W wgpu 0.19 oba typy
@@ -113,6 +184,11 @@ pub struct Renderer3d {
     /// Depth buffer 3D. 2D go nie ma w ogóle (rysowanie płaskie), więc
     /// każdy z rendererów ma swój.
     depth: Option<wgpu::TextureView>,
+    /// Sama tekstura głębokości — trzymana osobno od widoku, bo
+    /// post-processing potrzebuje jej jako ŹRÓDŁA do kopii
+    /// (`PostFx::copy_depth`). Sam `TextureView` nie wystarczy:
+    /// `copy_texture_to_texture` przyjmuje `&Texture`.
+    depth_tex: Option<wgpu::Texture>,
     depth_size: (u32, u32),
 
     scene_buffer: wgpu::Buffer,
@@ -127,6 +203,12 @@ pub struct Renderer3d {
     postfx: PostFx,
 
     pipeline: wgpu::RenderPipeline,
+    /// Pipeline nieba: pełnoekranowy trójkąt z fizycznym rozpraszaniem
+    /// atmosferycznym. Rysowany jako pierwszy w passie głównym.
+    ///
+    /// Niebo opcjonalne — patrz [`Atmosphere`]. Gdy `enabled` jest wyłączone,
+    /// pipeline w ogóle nie jest rysowany, a kadr wypełnia kolor czyszczenia.
+    sky_pipeline: wgpu::RenderPipeline,
     /// Pipeline passu cieni: ten sam shader, inny punkt wejścia
     /// (`vs_shadow`) i brak fragment shadera. Rysuje wyłącznie
     /// głębokość do mapy cieni.
@@ -149,6 +231,10 @@ pub struct Renderer3d {
 
     camera: Camera3d,
     lighting: Lighting,
+    /// Globalna skala rysunkowości (rampa anime na dyfuzji).
+    stylization: Stylization,
+    /// Niebo i mgła.
+    atmosphere: Atmosphere,
     clear_color: [f32; 4],
     time: f32,
     commands: Vec<DrawCmd>,
@@ -333,14 +419,28 @@ impl Renderer3d {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    // Scena rysuje do celu HDR (Rgba16Float), a NIE na
-                    // powierzchnię. Format musi się zgadzać z załącznikiem
-                    // render passu, inaczej walidacja wgpu to odrzuci.
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                // DWA cele kolorowe (G-Buffer):
+                //   [0] HDR — to, co widzi gracz,
+                //   [1] normalna w przestrzeni oka + chropowatość, z czego
+                //       post-processing bierze SSR, kontury, SSS i DoF.
+                // Oba muszą mieć format zgodny z załącznikami render passu
+                // (patrz `PostFx::gbuffer_view`), inaczej walidacja wgpu
+                // odrzuci potok.
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        // Scena rysuje do celu HDR (Rgba16Float), a NIE na
+                        // powierzchnię. Format musi się zgadzać z załącznikiem
+                        // render passu, inaczej walidacja wgpu to odrzuci.
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -353,6 +453,91 @@ impl Renderer3d {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
+        // --- pipeline nieba ---
+        //
+        // Pełnoekranowy trójkąt rysowany PRZED bryłami, z wyłączonym
+        // zapisem głębokości. Dzięki temu:
+        //   * niebo wypełnia cały kadru bez geometrii,
+        //   * każda bryła go zasłania, bo ma mniejszą głębokość.
+        //
+        // Layout ma TYLKO grupę 0 (uniform sceny) i to samo, co główny
+        // potok — niebo potrzebuje kierunku słońca, a nic więcej.
+        // Nie ustawiamy grupy 1 (materiały), bo shader nieba nie ma
+        // żadnego `@group(1)`.
+        // Layout ma TYLKO grupę 0 (uniform sceny) — i to wymaga OSOBNEGO
+        // `PipelineLayout`, bo `pipeline_layout` głównego potoku zawiera
+        // również grupę 1 (materiały). Gdybyśmy podali go tutaj, wgpu
+        // wymagałby powiązania grupy 1 przy każdym rysowaniu nieba,
+        // a `draw` nie ustawia żadnej — błąd walidacji wyskakiwałby
+        // dopiero w trakcie renderowania, mimo że shader nieba nie ma
+        // ani jednego `@group(1)`.
+        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Uran 3D Layout Nieba"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Uran 3D Sky Pipeline"),
+            layout: Some(&sky_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_sky",
+                // Pusty bufor wierzchołków: pozycje generuje sam shader
+                // z `vertex_index`, więc geometria nie jest potrzebna.
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_sky",
+                // Drugi cel MUSI tu być, nawet jeśli nic do niego nie
+                // zapisujemy: render pass ma DWA załączniki kolorowe
+                // (HDR + G-Buffer), a wgpu wymaga, żeby potok deklarował
+                // dokładnie tyle samo targetów, ile pass ma załączników.
+                // Bez tego walidacja odrzuca `set_pipeline` komunikatem
+                // „targets are incompatible" — i to dopiero w trakcie
+                // renderowania, czyli po zbudowaniu okna i wczytaniu
+                // assetów, nie na `cargo test`.
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        // Niebo nie ma normalnej ani chropowatości, więc
+                        // G-Bufera nie ruszamy. `empty()` mówi
+                        // „załącznik jest, ale nic do niego nie piszemy" —
+                        // taniej niż generowanie zerowego wektora
+                        // normalnej w shaderze.
+                        write_mask: wgpu::ColorWrites::empty(),
+                    }),
+                ],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                // `false` jest tu kluczowe: gdyby niebo zapisywało
+                // głębokość 1.0, zamalowałoby nim bryły narysowane
+                // wcześniej (przy `Less` nie, ale przy zmianie `LessEqual`
+                // w przyszłości — tak).
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -453,6 +638,7 @@ impl Renderer3d {
             format,
             samples,
             depth: None,
+            depth_tex: None,
             depth_size: (0, 0),
             scene_buffer,
             models_buffer,
@@ -461,6 +647,7 @@ impl Renderer3d {
             models_bind_layout: layout,
             postfx: PostFx::new(device, format, samples),
             pipeline,
+            sky_pipeline,
             shadow_pipeline,
             meshes: Vec::new(),
             materials,
@@ -469,6 +656,8 @@ impl Renderer3d {
             shadow_bind_group,
             camera: Camera3d::default(),
             lighting: Lighting::default(),
+            stylization: Stylization::default(),
+            atmosphere: Atmosphere::default(),
             clear_color: [0.45, 0.55, 0.68, 1.0],
             time: 0.0,
             commands: Vec::new(),
@@ -490,9 +679,36 @@ impl Renderer3d {
         &mut self.lighting
     }
 
+    /// Globalna skala rysunkowości sceny (do edycji przez grę).
+    pub fn stylization_mut(&mut self) -> &mut Stylization {
+        &mut self.stylization
+    }
+
+    /// Niebo i mgła (do edycji przez grę).
+    pub fn atmosphere_mut(&mut self) -> &mut Atmosphere {
+        &mut self.atmosphere
+    }
+
     /// Kolor czyszczenia (niebo / mgła).
     pub fn set_clear_color(&mut self, c: [f32; 4]) {
         self.clear_color = c;
+    }
+
+    /// Ustawienia post-processingu (tonemapping, bloom, kontury, DoF…).
+    ///
+    /// `postfx` jest prywatne, bo jego wnętrze (tekstury, potoki,
+    /// bind grupy) nie jest częścią API sceny. Same `PostSettings`
+    /// są za to w pełni publiczne — wystarczy jedno `&mut`, żeby gra
+    /// mogła zmienić dowolny parametr w locie, np. otworzyć
+    /// przysłonę przy celowaniu.
+    ///
+    /// Osobno od `lighting_mut`/`stylization_mut`, bo te ustawienia
+    /// wchodzą do bufora sceny, a post-processing liczy je dopiero
+    /// przy kompozycji. Mieszanie obu w jednym `&mut` wymuszałoby
+    /// wybór: albo blokowanie całej sceny na potrzeby pojedynczej
+    /// liczby, albo dodawanie osobnych setterów na każdy parametr.
+    pub fn post_settings_mut(&mut self) -> &mut PostSettings {
+        self.postfx.settings_mut()
     }
 
     /// Przesuwa czas świata (mgła, animacje).
@@ -538,31 +754,17 @@ impl Renderer3d {
         self.meshes.len()
     }
 
-    /// Tworzy depth buffer pod aktualny rozmiar okna.
+    /// Bufor głębokości pod aktualny rozmiar okna.
     ///
     /// Bufor głębokości musi mieć `sample_count` zgodny z potokiem —
     /// inaczej walidacja wgpu odrzuci pass z attachementem.
-    fn with_depth(self, device: &wgpu::Device, width: u32, height: u32) -> Self {
+    fn with_depth(mut self, device: &wgpu::Device, width: u32, height: u32) -> Self {
         let (w, h) = (width.max(1), height.max(1));
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Uran 3D Depth"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: self.samples,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        Self {
-            depth: Some(texture.create_view(&wgpu::TextureViewDescriptor::default())),
-            depth_size: (w, h),
-            ..self
-        }
+        let texture = depth_texture(device, w, h, self.samples);
+        self.depth = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        self.depth_tex = Some(texture);
+        self.depth_size = (w, h);
+        self
     }
 
     /// Upewnia się, że tablica modeli pomieści `count` obiektów.
@@ -625,6 +827,34 @@ impl Renderer3d {
         b
     }
 
+    /// Pozycja tarczy słońca w UV albo `None`, gdy jest poza kadrem.
+    ///
+    /// Promień do słońca rzutujemy tą samą macierzą `view_proj`, co
+    /// geometrię, więc wynik jest zgodny z tym, co widać. Dodatkowo
+    /// sprawdzamy, czy punkt leży PRZED kamerą (po stronie -Z): słońce
+    /// za plecami dawałoby smugi wychodzące z krawędzi obrazu, bo
+    /// `to_sun` w shaderze wskazywałoby w stronę odwrotną.
+    fn sun_screen_uv(&self) -> Option<(f32, f32)> {
+        // `light_dir` wskazuje OD źródła, więc pozycja tarczy leży
+        // w kierunku `-light_dir`.
+        let to_sun = -self.lighting.light_dir.normalize_or_zero();
+        let world = self.camera.position + to_sun * 1000.0;
+        let clip = self.camera.view_proj() * uran_math::Vec4::new(world.x, world.y, world.z, 1.0);
+        // `w <= 0` = punkt za kamerą (po stronie +Z).
+        if clip.w <= 1e-4 {
+            return None;
+        }
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        // Trzymamy się tu+1 zapasu: flara i promienie są szerokie,
+        // więc tarcza tuż za krawędzią wciąż powinna dawać poświat.
+        if !(-1.2..=1.2).contains(&ndc_x) || !(-1.2..=1.2).contains(&ndc_y) {
+            return None;
+        }
+        // NDC -> UV. Oś Y odwrócona, bo w NDC rośnie w górę.
+        Some(((ndc_x + 1.0) * 0.5, (1.0 - ndc_y) * 0.5))
+    }
+
     /// Renderuje scenę: czyści kolor i głębokość, rysuje wszystkie obiekty.
     fn render_pass(&mut self, target: &Scene3dTarget<'_>) {
         let device = &target.gpu.device;
@@ -633,21 +863,9 @@ impl Renderer3d {
         let h = target.gpu.config.height.max(1);
         if self.depth.is_none() || self.depth_size != (w, h) {
             self.depth_size = (w, h);
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Uran 3D Depth"),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: self.samples,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
+            let texture = depth_texture(device, w, h, self.samples);
             self.depth = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+            self.depth_tex = Some(texture);
             self.camera.set_aspect(w as f32 / h as f32);
         }
 
@@ -660,13 +878,26 @@ impl Renderer3d {
         let c = self.lighting.ambient;
         let s = &self.shadow.settings;
         let shadow_on = if s.enabled { 1.0 } else { 0.0 };
+        // `view_proj` liczymy RAZ i dzielimy na trzy macierze, które
+        // potrzebują różnych passów. Trzy osobne wywołania `view_proj()`
+        // dałyby te same liczby, ale kosztowałyby trzy pełne mnożenia
+        // macierzy na klatkę i groziłyby rozjazdem o 1 ULP.
+        let view_proj = self.camera.view_proj();
         let uniform = SceneUniform {
-            view_proj: self.camera.view_proj().to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
+            // Odwrotność potrzebna niebu (odtworzenie promienia) i
+            // post-processingu (odtworzenie pozycji z głębokości).
+            // Przy poprawnej kamerze macierz jest zawsze odwracalna;
+            // `glam` zwraca zera dla osobliwości, a wtedy `w` w shaderze
+            // daje 0 i dzielenie zostawia NaN — dlatego shader nieba
+            // normalizuje różnicę punktów, nie ich współrzędnych.
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            view: self.camera.view().to_cols_array_2d(),
             eye: [
                 self.camera.position.x,
                 self.camera.position.y,
                 self.camera.position.z,
-                0.0,
+                self.camera.tan_half_fov(),
             ],
             light_dir: [
                 self.lighting.light_dir.x,
@@ -686,6 +917,21 @@ impl Renderer3d {
             light_view_proj: self.shadow.light_view_proj().to_cols_array_2d(),
             shadow_params: [s.depth_bias, s.normal_offset, s.strength, s.radius],
             shadow_map_info: [self.shadow.texel_uv(), shadow_on, 0.0, 0.0],
+            // Near/far w jednym miejscu: od nich zależą liniaryzacja
+            // głębokości w postfx i rekonstrukcja pozycji w SSR.
+            screen: [w as f32, h as f32, self.camera.near, self.camera.far],
+            stylize: [
+                self.stylization.amount,
+                self.stylization.softness,
+                self.stylization.sss,
+                0.0,
+            ],
+            atmos: [
+                self.atmosphere.fog_density,
+                self.atmosphere.fog_color[0],
+                self.atmosphere.fog_color[1],
+                self.atmosphere.fog_color[2],
+            ],
         };
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
         // tablica modeli: jeden wpis na obiekt
@@ -708,7 +954,17 @@ impl Renderer3d {
         });
         // post-processing: cel HDR i tekstury zależne od rozmiaru okna
         self.postfx.ensure_size(device, w, h);
-        self.postfx.upload_params(queue, w, h, self.time);
+        self.postfx.upload_params(
+            queue,
+            w,
+            h,
+            self.time,
+            self.sun_screen_uv(),
+            self.camera.near,
+            self.camera.far,
+            self.camera.tan_half_fov(),
+            self.camera.aspect,
+        );
 
         // --- pass cieni: sama głębokość z pozycji słońca ---
         //
@@ -753,25 +1009,52 @@ impl Renderer3d {
             // kolidowała z pożyczką `&mut self` w pętli rysowania
             // pożyczka widoku głębokości trwa tylko do końca passu
             let depth_view = self.depth.as_ref().expect("depth utworzony wyżej");
+            // Dwóch celów kolorowych w kolejności zgodnej z `targets`
+            // w pipeline głównym. Nie wolno ich zamienić miejscami —
+            // wgpu odrzuci pass, a komunikat błędu nie mówi wprost,
+            // o które chodzi.
+            let hdr_view = self.postfx.hdr_view();
+            let gbuf_view = self.postfx.gbuffer_view();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Uran 3D Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    // Rysujemy do celu HDR, NIE na powierzchnię. Na ekran
-                    // wrzuca nas dopiero `postfx.composite` (tonemapping,
-                    // bloom, AA) — bez tego poświaty obciąłoby 8 bitów.
-                    view: self.postfx.hdr_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        // 3D czyści sam: 2D dostanie potem LoadOp::Load
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear[0] as f64,
-                            g: clear[1] as f64,
-                            b: clear[2] as f64,
-                            a: clear[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        // Rysujemy do celu HDR, NIE na powierzchnię. Na ekran
+                        // wrzuca nas dopiero `postfx.composite` (tonemapping,
+                        // bloom, AA) — bez tego poświaty obciąłoby 8 bitów.
+                        view: hdr_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            // 3D czyści sam: 2D dostanie potem LoadOp::Load
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: clear[0] as f64,
+                                g: clear[1] as f64,
+                                b: clear[2] as f64,
+                                a: clear[3] as f64,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        // G-Bufer: normalna w przestrzeni oka + chropowatość.
+                        // Czyścimy na czarno, co po liniaryzacji głębokości
+                        // daje „tło nieba" (normalna = 0, chropowatość = 0,
+                        // czyli najgładziej) — a niebo i tak nadpisuje ten
+                        // cel swoim własnym kolorem, więc w praktyce
+                        // wartość czyszczenia nie jest tu krytyczna.
+                        view: gbuf_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -783,6 +1066,22 @@ impl Renderer3d {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            // --- niebo: PIERWSZE, zanim jakakolwiek bryła ---
+            //
+            // Kolejność jest tu istotna. Niebo ma wyłączony zapis
+            // głębokości i porównanie `LessEqual`, więc rysowane później
+            // nadpisałoby kolor na bryłach (wygrałoby, bo 1.0 <= głębokość
+            // bryły). Rysowane wcześniej — wypełnia tło i zostaje
+            // zasłonięte przez bryły, które mają mniejszą głębokość.
+            if self.atmosphere.sky {
+                pass.set_pipeline(&self.sky_pipeline);
+                // Ta sama grupa 0 co dla brył: uniform sceny z kierunkiem
+                // słońca i macierzą `inv_view_proj`.
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                // 3 wierzchołki = pełny prostokąt, bez bufora wierzchołków.
+                pass.draw(0..3, 0..1);
+            }
 
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
@@ -808,11 +1107,60 @@ impl Renderer3d {
             self.last_draw_count = drawn;
         }
 
+        // --- kopia głębokości dla post-processingu ---
+        //
+        // MUSI być poza blokiem powyżej: w tym samym passie nie wolno
+        // czytać tekstury, która jest jego celem. Kopia do osobnej
+        // tekstury (z `COPY_DST`) jest już legalna, bo tamten pass
+        // się skończył.
+        //
+        // Głębokość jest potrzebna dla: konturów (krawędzie obiektów),
+        // DoF (odległość), SSR (kolidencja promienia) i mgły w passie
+        // kompozycji. Bez niej te efekty miałyby zgadywać geometrię
+        // z samego koloru.
+        if self.samples == 1 {
+            // Przy MSAA kopia byłaby niemożliwa (głębokość
+            // multisamplingowa nie da się skopiować jako 2D), więc
+            // efekty ekranowe po prostu nie włączamy. Gry 3D ustawiają
+            // `.samples(1)`, więc ścieżka jest domyślna.
+            if let Some(tex) = self.depth_tex.as_ref() {
+                self.postfx.copy_depth(&mut encoder, tex);
+            }
+        }
+
         // post-processing na powierzchnię: bloom (3 passy) + kompozycja
         self.postfx.composite(&mut encoder, target);
 
         queue.submit(Some(encoder.finish()));
     }
+}
+
+/// Bufor głębokości sceny.
+///
+/// Osobna funkcja, bo głębokość tworzymy w dwóch miejscach
+/// (`with_depth` przy starcie i `render_pass` przy resize) i obie
+/// ścieżki muszą zgadzać się co do formatu oraz `sample_count` —
+/// rozjazd kończy się odrzuceniem potoku przez walidację, bez
+/// wskazania, która z dwóch ścieżek się rozjechała.
+fn depth_texture(device: &wgpu::Device, w: u32, h: u32, samples: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Uran 3D Depth"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: samples,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        // `COPY_SRC` jest potrzebne do skopiowania głębokości dla
+        // post-processingu (`PostFx::copy_depth`). Bez tego flagi
+        // wgpu odrzuci `copy_texture_to_texture` dopiero w trakcie
+        // renderowania.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
 }
 
 /// Bufor tablicy modeli o zadanej pojemności.

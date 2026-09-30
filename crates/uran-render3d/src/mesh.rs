@@ -199,18 +199,18 @@ impl GpuMesh {
 /// do 16 B — struktura z samymi `vec3` urosłaby i walidacja wgpu
 /// odrzuciłaby bufor.
 ///
-/// ## Rozmiar: 224 B
+/// ## Rozmiar: 400 B
 ///
 /// Liczymy pole po polu, bo to jednocześnie kontrakt z shaderem
 /// i asercja kompilacji:
 ///
 /// | pole | rozmiar |
 /// |------|---------|
-/// | `view_proj` | 4·`vec4` = 64 B |
+/// | `view_proj`, `inv_view_proj`, `view`, `light_view_proj` | 4·64 = 256 B |
 /// | `eye`, `light_dir`, `light_color`, `ambient_time` | 4·16 = 64 B |
-/// | `light_view_proj` | 4·`vec4` = 64 B |
 /// | `shadow_params`, `shadow_map_info` | 2·16 = 32 B |
-/// | **suma** | **224 B** |
+/// | `screen`, `stylize`, `atmos` | 3·16 = 48 B |
+/// | **suma** | **400 B** |
 ///
 /// Wszystko jest 16-bajtowo wyrównane, więc `size % 16 == 0` i wgpu
 /// nie zgłosi błędu wyrównania.
@@ -219,7 +219,23 @@ impl GpuMesh {
 pub struct SceneUniform {
     /// Macierz świata -> NDC.
     pub view_proj: [[f32; 4]; 4],
-    /// Pozycja oka (do specular), `w` nieużywane.
+    /// Odwrotność `view_proj`: NDC -> świata.
+    ///
+    /// Potrzebna w shaderze nieba do odtworzenia kierunku promienia
+    /// z piksela oraz w post-processingu do odtworzenia pozycji świata
+    /// z samej głębokości (SSR, kontury, SSS, DoF).
+    pub inv_view_proj: [[f32; 4]; 4],
+    /// Macierz świata -> przestrzeń oka.
+    ///
+    /// Normalne G-Bufera trzymamy w przestrzeni oka, bo tam promień
+    /// odbicia SSR jest prosty: odbijamy wektor do oka wokół `N`
+    /// i lecimy wzdłuż niego, bez dodatkowych transformacji.
+    pub view: [[f32; 4]; 4],
+    /// Pozycja oka (do specular), `w` = tan(FOV/2) w pionie.
+    ///
+    /// Tangens jest tu, bo passy pełnoekranowe muszą odtworzyć promień
+    /// przez piksel, a liczenie `tan` w każdym z nich zdradzałoby
+    /// rozszerzenie pola widzenia o niejedno przekształcenie.
     pub eye: [f32; 4],
     /// Kierunek światła kierunkowego (normalizowany w shaderze).
     pub light_dir: [f32; 4],
@@ -240,11 +256,30 @@ pub struct SceneUniform {
     /// `x` = rozmiar texela w UV, `y` = włącznik (0/1),
     /// `z`,`w` = wyrównanie na 16 B.
     pub shadow_map_info: [f32; 4],
+
+    /// --- ekran i atmosfera (wspólne dla shadera sceny i postfx) ---
+    /// `x,y` = rozmiar kadru w px, `z` = bliska płaszczyzna, `w` = daleka.
+    ///
+    /// Near/far są potrzebne do liniaryzacji głębokości: z samego
+    /// `Depth32Float` nie da się odtworzyć odległości w jednostkach
+    /// świata, a bez niej mgła, DoF i kontury miałyby nieliniowy skok
+    /// przy oddaleniu.
+    pub screen: [f32; 4],
+    /// `x` = siła stylizacji (0 = czyste PBR, 1 = mocna rampa anime),
+    /// `y` = miękkość progu terminatora, `z` = siła SSS,
+    /// `w` = wzmocnienie odbicia otoczenia.
+    pub stylize: [f32; 4],
+    /// `x` = gęstość mgły, `y..w` = kolor mgły RGB.
+    ///
+    /// Gęstość jest jedna dla całej mgły, a kolor bierze z gradientu
+    /// w shaderze sceny — mieszanie dwóch barw w samym oświetleniu
+    /// kosztowałoby tyle, ile cały gradient liczony w post-processingu.
+    pub atmos: [f32; 4],
 }
 
 /// Rozmiar uniformu jest częścią kontraktu z shaderem: zmiana jednego bez
 /// drugiego kończy się błędem walidacji wgpu dopiero podczas renderowania.
-const _: () = assert!(std::mem::size_of::<SceneUniform>() == 224);
+const _: () = assert!(std::mem::size_of::<SceneUniform>() == 400);
 
 /// Transformacja i kolor jednego obiektu w scenie.
 ///

@@ -10,3 +10,11 @@ glam.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
 uran-asset.workspace = true
+
+[dev-dependencies]
+# Naga to walidator WGSL, którego wgpu używa wewnętrznie. Dodajemy go
+# jawnie, żeby testy mogły SPRAWDZIĆ, że shader się kompiluje, zamiast
+# czekać na błąd walidacji dopiero przy pierwszym uruchomieniu gry.
+# Wersja musi zgadzać się z tą, którą wgpu 0.19 wciąga do siebie —
+# inaczej test parsowałby inną wersję WGSL niż ta, którą zobaczy GPU.
+naga = { version = "0.19", features = ["wgsl-in"] }

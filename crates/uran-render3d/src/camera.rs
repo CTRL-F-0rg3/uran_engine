@@ -72,6 +72,25 @@ impl Camera3d {
         proj * view
     }
 
+    /// Sama macierz widoku (świat -> przestrzeń oka).
+    ///
+    /// Osobno od [`Self::view_proj`], bo G-Bufer trzyma normalne
+    /// w przestrzeni oka, a shader nieba potrzebuje odwrotności całej
+    /// macierzy rzutowania. Liczenie `look_at` drugi raz w shaderze
+    /// nie wchodzi w grę — koszt jest po stronie GPU na każdy piksel.
+    pub fn view(&self) -> Mat4 {
+        Mat4::look_at_rh(self.position, self.target, Vec3::Y)
+    }
+
+    /// Tangens połowy kąta widzenia w pionie.
+    ///
+    /// Wpisujemy go do uniformu sceny, bo passy pełnoekranowe muszą
+    /// odtworzyć promień przez piksel, a liczenie `tan` w każdym z nich
+    /// powielałoby tę samą definicję pola widzenia w czterech miejscach.
+    pub fn tan_half_fov(&self) -> f32 {
+        (self.fov_y * 0.5).tan()
+    }
+
     /// Promień z oka w kierunku `dir` (kierunek NIE musi być jednostkowy —
     /// normalizujemy tutaj, więc można podać różnicę `target - position`).
     pub fn ray(&self, dir: Vec3) -> Ray {

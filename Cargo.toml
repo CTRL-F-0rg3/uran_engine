@@ -6,6 +6,7 @@ members = [
     "uran-engine",   # <-- Zmienione z "engine"
     "uran-game",     # <-- Zmienione z "game"
     "uran-tanks", "stardew-demo",    # FPS z czołgami (renderer 3D)
+    "endfield-3d",   # akcja 3D w stylu Endfield (PBR + NPR)
 ]
 
 [workspace.dependencies]
