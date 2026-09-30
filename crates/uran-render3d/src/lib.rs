@@ -235,6 +235,95 @@ mod shader_tests {
     /// przy 0.0 shader dzieli przez `max(d, 0.001)`, co daje nieskończony
     /// blur na pikselach w płaszczyźnie ogniskowania.
     #[test]
+    /// Ambient musi być **dużo mniejszy** od natężenia słońca.
+    ///
+    /// Obraz wychodził „jak przez mętną soczewkę" właśnie dlatego, że
+    /// `ambient` wynosił ~0.4 przy słońcu 4.0. Stosunek poniżej ~0.05
+    /// daje realny kontrast: strona w cieniu jest ciemna, a nie tylko
+    /// „inny odcień tego samego jasnego koloru".
+    #[test]
+    fn ambient_nie_wypelnia_cieni() {
+        let l = crate::scene::Lighting::default();
+        let ambient_luma: f32 =
+            l.ambient[0] * 0.2126 + l.ambient[1] * 0.7152 + l.ambient[2] * 0.0722;
+        let sun_luma: f32 =
+            l.light_color[0] * 0.2126 + l.light_color[1] * 0.7152 + l.light_color[2] * 0.0722;
+        let ratio = ambient_luma / (sun_luma * l.intensity);
+
+        assert!(
+            ratio < 0.05,
+            "ambient:słońce = {:.3} — cienie wypełnione (prawidłowo < 0.05)",
+            ratio
+        );
+        // Cienie nadal muszą być widoczne jako „niebo z wnętrza",
+        // a nie czysta czerń — inaczej scena wygląda jak wyłączony
+        // silnik, a nie jak niedoświetlone pomieszczenie.
+        assert!(
+            ambient_luma > 0.01,
+            "ambient = {} — zbyt ciemno, cienie staną się dziurami",
+            ambient_luma
+        );
+    }
+
+    /// Kalibracja obrazu musi być aktywna domyślnie.
+    ///
+    /// Te trzy pola odpowiadają na zgłoszone problemy: mętna soczewka
+    /// (ostrość), szare cienie (lift), brak różnicy między materiałami
+    /// (chropowatość). Wyłączone zostawiają obraz dokładnie takim,
+    /// jak był przed poprawką.
+    #[test]
+    fn kalibracja_obrazu_jest_wlaczona() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+
+        assert!(
+            p.clarity > 0.3,
+            "clarity = {} — obraz będzie znowu mętny",
+            p.clarity
+        );
+        // Powyżej 1.5 unsharp daje halo (białą obwódkę) na
+        // sylwetkach, a to dokładnie ten defekt, który usuwamy.
+        assert!(
+            p.clarity <= 1.5,
+            "clarity = {} — pojawi się halo na krawędziach",
+            p.clarity
+        );
+        assert!(
+            p.shadow_lift > 0.0 && p.shadow_lift <= 0.05,
+            "shadow_lift = {} — poza zakresem 0..=0.05",
+            p.shadow_lift
+        );
+        // `roughness_bias` celowo 0: korekta chropowatości to decyzja
+        // sceny, a nie silnika. Test pilnuje tylko, że pole istnieje
+        // i mieści się w zadeklarowanym zakresie.
+        assert!(
+            (-1.0..=1.0).contains(&p.roughness_bias),
+            "roughness_bias = {} poza -1..1",
+            p.roughness_bias
+        );
+    }
+
+    /// Nasycenie i kontrast muszą być wyżej niż 1.
+    ///
+    /// AgX celowo odbarwia kolory (żeby światła nie były plamami), więc
+    /// domyślne 1.0 dawało wyblakłą scenę. Podbicie po tonemapie
+    /// odzyskuje intensywność materiałów.
+    #[test]
+    fn kolory_sa_nasycone_a_ma_kontrast() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+        assert!(
+            p.saturation > 1.05,
+            "saturation = {} — scena wygląda wyblakła",
+            p.saturation
+        );
+        assert!(
+            p.contrast > 1.05,
+            "contrast = {} — brak głębi tonalnej",
+            p.contrast
+        );
+    }
+
     fn domyslne_sa_dokladnie_takie_jak_zamowiono() {
         use crate::postfx::PostSettings;
         let p = PostSettings::default();

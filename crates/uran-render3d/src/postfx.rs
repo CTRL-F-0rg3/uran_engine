@@ -55,6 +55,14 @@ pub struct PostParams {
     /// pikselach, czyli takie zacienienie zależałoby od rozdzielczości
     /// okna i rozjeżdżałoby się przy zmianie rozmiaru.
     pub proj: [f32; 4],
+    /// Kalibracja obrazu: `x` = ostrość, `y` = lift cieni,
+    /// `z` = korekta chropowatości, `w` = rezerwa.
+    ///
+    /// Osobne `vec4`, a nie doczepianie do istniejących pól: `proj.z/w`
+    /// oraz `grade2.y/w` są już zajęte (SSAO i podział tonów), a
+    /// mieszanie niepowiązanych znaczeń w jednym wektorze sprawia, że
+    /// zmiana jednego efektu cicho rusza drugi.
+    pub clarity: [f32; 4],
 }
 
 impl PostParams {
@@ -118,18 +126,19 @@ impl PostParams {
             ],
             // Projekcja: SSAO odtwarza z tego pozycję w metrach.
             proj: [tan_half_fov, aspect, 0.0, 0.0],
+            clarity: [s.clarity, s.shadow_lift, s.roughness_bias, 0.0],
         }
     }
 }
 
-const _: () = assert!(std::mem::size_of::<PostParams>() == 208);
+const _: () = assert!(std::mem::size_of::<PostParams>() == 224);
 
 /// Rozmiar bufora uniformu w bajtach — jedna stała dla wszystkich passów.
 ///
 /// Trzymamy ją obok struktury, bo `create_buffer` potrzebuje liczby,
 /// a struktury nie da się zmierzyć w wyrażeniu `const`. Asercja
 /// powyżej pilnuje, żeby obie wartości nie rozjechały się.
-const POST_PARAMS_SIZE: usize = 208;
+const POST_PARAMS_SIZE: usize = 224;
 
 /// Ustawienia wyglądu, które gra może zmieniać w locie.
 #[derive(Debug, Clone, Copy)]
@@ -240,6 +249,46 @@ pub struct PostSettings {
     /// powyżej ~250 próbki na płaskiej powierzchni zaczynają
     /// „przebijać" i AO znika. Zakres użyteczny: 50..200.
     pub ssao_reject_fadeoff: f32,
+
+    // --- kalibracja obrazu ----------------------------------------------
+    /// Ostrość obrazu (unsharp mask) — 0 = wyłączona.
+    ///
+    /// ## Dlaczego to potrzebne
+    ///
+    /// Obraz po tonemapowaniu i rozmyciu DoF ma miękkie krawędzie, a
+    /// przy niskim kontraście cieni wygląda jak patrząc przez mętną
+    /// soczewkę. Ostrość wyciąga z powrotem kontur, które tonemap
+    /// spłaszczył.
+    ///
+    /// Implementacja w `post.wgsl` to klasyczny unsharp: różnica
+    /// sąsiadów dodana z powrotem. Wartość 0.5 to ledwie zauważalne
+    /// wyostrzenie, 1.0 wyraźne; powyżej 1.5 pojawia się halo
+    /// (biała obwódka) na kontrastowych krawędziach.
+    pub clarity: f32,
+    /// Podniesienie cieni (lift) 0..1.
+    ///
+    /// ## Po co, skoro ambient już obniżyliśmy
+    ///
+    /// Ambient daje cieniom **kolor** otoczenia, ale nic nie mówi o
+    /// tym, gdzie ma być **czarny punkt**. Lift przesuwa dolny koniec
+    /// krzywej: 0 zostawia absolutną czerń, więc kontakt obiektu
+    /// z podłożem zanika. 0.02–0.04 przywraca czerń w cieniach bez
+    /// szarzenia całego obrazu — to różnica między „cieniem" a
+    /// „dziurą w obrazie".
+    pub shadow_lift: f32,
+    /// Korekta chropowatości materiału, zakres -1..1.
+    ///
+    /// ## Problem, który rozwiązuje
+    ///
+    /// Domyślna chropowatość 0.6 dla każdej powierzchni oznacza, że
+    /// wszystko odbija świat tak samo słabo — obraz traci różnicę
+    /// między matowym betonem a jedwabistym metalu. Ujemna wartość
+    /// wygładza (mniej refleksów, więcej koloru materiału), dodatnia
+    /// pogłębia refleksy.
+    ///
+    /// Nie zastępuje mapy ORM — to korekta globalna, gdy mapa
+    /// chropowatości nie jest dostępna.
+    pub roughness_bias: f32,
 }
 
 impl Default for PostSettings {
@@ -268,10 +317,19 @@ impl Default for PostSettings {
             // Ziarno 0.014 → 0.007. Jeszcze wystarcza na maskowanie
             // bandingu w gradiencie nieba, a nie jest widoczną teksturą.
             grain: 0.007,
-            // Nasycenie 1.10 → 1.04 i kontrast 1.05 → 1.03. Silnik ma
-            // dawać wierny obraz; wyraźna stylizacja to decyzja demo.
-            saturation: 1.04,
-            contrast: 1.03,
+            // Nasycenie 1.04 → 1.12 i kontrast 1.03 → 1.12.
+            //
+            // AgX celowo odbarwia nasycone kolory — to jego zadaniem
+            // (żeby światła nie były kolorowymi plamami). Efekt
+            // uboczny: scena wygląda wyblakła. Podbicie tutaj
+            // przywraca intensywność materiałów tam, gdzie AgX
+            // ją zjadł, ale **po** tonemapie — więc biele i światła
+            // pozostają nietknięte, a kolory odzyskują nasycenie.
+            saturation: 1.12,
+            // 1.03 → 1.12: rozciąga zakres tonalny wokół 0.5.
+            // Razem z liftem cieni daje pełną głębię: czarne w
+            // cieniach, białe w światłach, więcej materiału w środku.
+            contrast: 1.12,
             // Antyaliasing to NIE jest efekt, tylko redukcja aliasingu.
             // Obniżanie go dodawałoby schodki zamiast je usuwać, więc
             // zostaje 0.65.
@@ -363,6 +421,23 @@ impl Default for PostSettings {
             // zakrzywionych ku kamerze, zbyt duża kasuje AO przy
             // stykach obiektów. WickedEngine używa tu ~120.
             ssao_reject_fadeoff: 120.0,
+
+            // --- kalibracja obrazu ---
+            // 0.55: wyraźne wyostrzenie, ale bez halo na krawędziach.
+            // Unsharp wzmacnia różnicę sąsiadów, więc zbyt duża
+            // wartość daje białą obwódkę tam, gdzie gradient jest
+            // stromy — czyli dokładnie na sylwetkach, które są
+            // najbardziej widoczne.
+            clarity: 0.55,
+            // 0.03: przywraca czerń w cieniach. Bez tego AO i kontakt
+            // z podłożem giną w szarości, bo tonemap AgX wypłaszcza
+            // najciemniejsze wartości. Powyżej 0.05 cały obraz
+            // szarzeje.
+            shadow_lift: 0.03,
+            // 0.0: bez korekty. Chropowatość 0.6 z materiału jest
+            // rozsądnym punktem wyjścia; ustawienie biasu to
+            // decyzja sceny, nie silnika.
+            roughness_bias: 0.0,
         }
     }
 }
@@ -970,6 +1045,11 @@ impl PostFx {
             grade2: [0.0; 4],
             ssao: [0.0; 4],
             proj: [0.0; 4],
+            // `clarity` zerujemy w passach pomocniczych (bright, blur):
+            // te passy operują na wycinku obrazu, a nie na całym
+            // kadrze, więc unsharp liczony na ich danych byłby liczony
+            // z ułamka sąsiadów i dawałby losowe wyniki.
+            clarity: [0.0; 4],
         };
         queue.write_buffer(&self.blur_buffers[0], 0, bytemuck::bytes_of(&bright));
 

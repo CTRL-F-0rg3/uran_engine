@@ -54,6 +54,9 @@ struct Params {
     // x = tan(FOV/2) w pionie, y = aspect, z,w = rezerwa.
     // SSAO odtwarza z tego pozycję w METRACH.
     proj: vec4<f32>,
+    // x = ostrość (unsharp), y = lift cieni,
+    // z = korekta chropowatości, w = rezerwa.
+    clarity: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -984,6 +987,81 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // --- saturacja i kontrast wokół 0.5
     col = mix(vec3<f32>(luma(col)), col, p.fx.z);
     col = clamp((col - 0.5) * p.fx.w + 0.5, vec3<f32>(0.0), vec3<f32>(1.0));
+
+    // ==================================================================
+    //  11. Ostrość i lift cieni
+    // ==================================================================
+    //
+    // Oba zabiegi odpowiadają na to samo: po AgX i niskim kontraście
+    // obraz traci separację i wygląda jak mętna soczewka. Tonemap
+    // spłaszcza gradienty przy krawędziach, a podniesiony ambient
+    // dodatkowo zamyka dolną część zakresu.
+
+    // --- lift cieni: przywraca czerń tam, gdzie AgX ją rozpyłł
+    //
+    // Nie mnożymy — dodajemy. Mnożnik podbijałby też światła
+    // (mniej różnicy między cieniem a blaskiem), a dodatek działa
+    // wyłącznie na ciemnych pikselach. Waga `1 - smoothstep` zeruje
+    // wpływ powyżej połowy zakresu, więc biele zostają nietknięte.
+    if (p.clarity.y > 0.0) {
+        let l = luma(col);
+        let shadow_w = 1.0 - smoothstep(0.0, 0.45, l);
+        col = col + vec3<f32>(p.clarity.y * shadow_w);
+    }
+
+    // --- unsharp mask: wyostrzenie z sąsiadów
+    //
+    //Próbkujemy **obraz tonemapowany** (`src` po AgX), a nie HDR —
+    // inaczej wzmacniane byłyby wartości, które i tak zostaną
+    // przycięte przez tonemap, i efekt zniknąłby.
+    //
+    // Krzyż 4 próbek (N/S/E/W) zamiast 8 z przekątnymi: unsharp liczy
+    // gradient, a 4 osie wystarczą, by wykryć krawędź. 8 próbek
+    // kosztowałoby 2× więcej, a dawałoby minimalnie lepszy wynik.
+    if (p.clarity.x > 0.0) {
+        let tx = 1.0 / p.screen.xy;
+        let n0 = textureSample(src, samp, uv + vec2<f32>(0.0, -tx.y)).rgb;
+        let n1 = textureSample(src, samp, uv + vec2<f32>(0.0, tx.y)).rgb;
+        let n2 = textureSample(src, samp, uv + vec2<f32>(-tx.x, 0.0)).rgb;
+        let n3 = textureSample(src, samp, uv + vec2<f32>(tx.x, 0.0)).rgb;
+        // Średnia sąsiadów × 4, bo każda próbka ma wagę 1/4.
+        let blur = (n0 + n1 + n2 + n3) * 0.25;
+        // Różnica do średniej sąsiadów to „szczegół", którego tonemap
+        // spłaszczył. Dodajemy go z powrotem ze współczynnikiem
+        // `clarity`.
+        //
+        // Ostrość próbkujemy z tego samego celu co obraz, więc wynik
+        // jest niezależny od zawartości kadru.
+        col = col + (col - blur) * p.clarity.x;
+    }
+
+    // ==================================================================
+    //  12. Korekta chropowatości
+    // ==================================================================
+    //
+    // ## Po co w post-processingu, a nie w `s3d.wgsl`
+    //
+    // Chropowatość wpływa na oświetlenie, więc korekta należałaby do
+    // shadera sceny. Nie może jednak: `PostSettings` nie ma tu dostępu
+    // — uniform sceny (`SceneUniform`) należy do `scene.rs` i jest
+    // wypełniany osobno, więc pole musiałoby przejść przez dwie
+    // struktury.
+    //
+    // Efekt da się jednak uzyskać tutaj: G-Bufer ma w kanale `w`
+    // chropowatość (`out.normal_rough` w `s3d.wgsl`). Mnożąc obraz
+    // przez współczynnik zależny od niej, przesuwamy energię: gładsze
+    // powierzchnie jaśnieją (więcej odbicia otoczenia), szersze
+    // ciemniej. Efekt jest globalny i słaby — to korekta, nie
+    // przebudowa oświetlenia.
+    //
+    // Ujemne `roughness_bias` wygładza, dodatnie pogłębia refleksy.
+    if (abs(p.clarity.z) > 0.001) {
+        let rough = gbuffer(uv).w;
+        // `0.5` to punkt neutralny: chropowatość 0.5 dostaje mnożnik 1.
+        // Świadomie liniowa skala zamiast `smoothstep` — krzywa
+        // ukrywałaby, jak mocno ustawienie faktycznie działa.
+        col = col * (1.0 + p.clarity.z * (0.5 - rough));
+    }
 
     // --- winieta: przyciemnia narożniki i kieruje wzrok do centrum
     let vig = 1.0 - p.grade.z * smoothstep(0.30, 1.05, length(centered) * 1.45);

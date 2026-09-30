@@ -92,9 +92,20 @@ impl Default for Lighting {
             // daje to biel na białych powierzchniach i nie prześwietla
             // asfaltu
             intensity: 4.0,
-            // Ambient NIESIE NIEBO: chłodny, wyraźnie niebieski. Podnosi
-            // cienie do poziomu otoczenia, zamiast zostawiać je czarne.
-            ambient: [0.30, 0.40, 0.58],
+            // Ambient NIESIE NIEBO: chłodny, wyraźnie niebieski.
+            //
+            // ## Dlaczego tak mały
+            //
+            // 0.30/0.40/0.58 przy słońcu 4.0 wypełniało cienie na tyle,
+            // że obraz wyglądał jak patrząc przez mętną soczewkę: brak
+            // kontrastu, plamy zamiast brył, każda powierzchnia w tym
+            // samym odcieniu. Stosunek ambient:słońce poniżej ~0.05
+            // oznacza, że strona w cieniu dostaje realny kontrast,
+            // a nie tylko ciemniejszy odcień tego samego koloru.
+            //
+            // 0.10/0.13/0.18 to nadal „niebo z wnętrza" — cienie są
+            // chłodne i czytelne, ale nie zalewają geometrii.
+            ambient: [0.10, 0.13, 0.18],
         }
     }
 }
