@@ -420,35 +420,48 @@ fn fs_godray(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 // ======================================================================
-//  SSAO — Screen-Space Ambient Occlusion
+//  SSAO — Screen-Space Ambient Occlusion (MSAO)
 // ======================================================================
 //
 // AO sprawia, że obiekty przestają wisieć w powietrzu: przyciemnia
-// narożniki, wnęki i miejsca kontaktu z podłogą. W Unreal to jeden
-// z najbardziej widocznych elementów „profesjonalnego" obrazu —
-// bez niego bryły wyglądają jak naklejki, niezależnie od tego jak
-// dobre są materiały.
+// narożniki, wnęki i miejsca kontaktu z podłogą.
 //
-// ## Jak to działa
+// ## Dlaczego nie zwykły test kulowy
 //
-// 1. Odtwarzamy odległość piksela od oka z głębokości.
-// 2. Przesuwamy próbkę o `bias` wzdłuż normalnej, żeby nie próbkować
-//    tej samej powierzchni, którą cieniujemy.
-// 3. Wokół piksela rozmieszczamy `AOAO_SAMPLES` próbek w krótkim
-//    spiralu (kierunki złote, jak w DoF) — spirala daje lepsze
-//    pokrycie niż siatka za tę samą liczbę próbek.
-// 4. Dla każdej próbki porównujemy głębokość z oczekiwaną (przy
-//    założeniu, że kula o promieniu `ssao.y` leży w tym kierunku).
-// 5. Próbka „bliższa" niż powierzchnia = coś zasłania horyzont,
-//    czyli jest zacieniona.
+// Klasyczne SSAO (`dot(V, N) > 0 && |V| < radius`) ma w sobie błąd,
+// którego nie da się wyeliminować lepszym biasem: próbka leżąca na
+// **tej samej powierzchni**, co cieniujemy, mieści się w kuli i
+// zostaje policzona jako przesłona. Na powierzchni zakrzywionej ku
+// kamerze daje to ciemne plamy, które wyglądają jak brud.
 //
-// Wynik to 0 (niezacienione) .. 1 (całkowicie zacienione).
+// ## Co robimy inaczej (MSAO)
+//
+// Przenosimy podejście z WickedEngine (`msaoCS.hlsl`, pochodna
+// Microsoft MiniEngine). Zamiast liczyć każdą próbkę osobno,
+// **łączymy je w pary** symetryczne względem piksela:
+//
+//     porównujemy  `próbka @ +offset`  z  `próbka @ -offset`
+//
+// Obie mierzą to samo przenikanie w głąb kuli, więc ich różnica
+// kasuje artefakt powierzchni, a pozostaje prawdziwa przesłona
+// (inna powierzchnia po jednej stronie, brak po drugiej).
+//
+// Dodatkowo w przeciwieństwie do MiniEngine **nie potrzebujemy
+// groupshared cache ani interleave** — u nas każdy piksel ma swój
+// własny shader, więc próbki czytamy po prostu z bufora głębokości.
 
-/// Liczba próbek. 12 to kompromis: mniej daje widoczne plamy,
-/// więcej kosztuje proporcjonalnie i nie poprawia obrazu.
-const AOAO_SAMPLES: i32 = 12;
+/// Liczba **par** próbek. Każda para = 2 odczyty głębokości, więc 6 par
+/// = 12 próbek — tyle samo, ile brał poprzedni `AOAO_SAMPLES`.
+///
+/// 6 par to kompromis: mniej daje widoczne plamy, więcej kosztuje
+/// liniowo (każda para to dwa odczyty tekstury) i przy 12 parach obraz
+/// przestaje się poprawiać — zaczyna tylko ciemnieć.
+const AO_PAIRS: i32 = 6;
 
 /// Złoty kąt spiralny (2π/φ², φ = złoty przekrój).
+///
+/// Kierunki złote dają najlepsze pokrycie koła za daną liczbę próbek —
+/// siatka kartezjańska zostawia widoczne przerwy po przekątnych.
 const AO_SPIRAL: f32 = 2.39996323;
 
 /// Głębokość piksela w surowym (nieliniowym) zapisie bufora.
@@ -511,11 +524,15 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     let N = g.xyz / n_len;
 
     let linear = linear_from_raw(d);
-    let P = view_position(uv, linear);
-    // Przesunięcie wzdłuż normalnej o `bias`. Chroni przed
-    // samooczytywaniem: bez niego punkt leżący na tej samej
-    // powierzchni „widzi" sam siebie jako zasłonę.
-    let center = P + N * p.ssao.z;
+    // Uwaga: od wersji z testem par **nie przesuwamy środka kuli
+    // wzdłuż normalnej**. W MSAO odrzucanie par robi dokładnie to, co
+    // robił dawny `ssao_bias` — a robi to lepiej, bo nie przesuwa całej
+    // kuli i nie zniekształca AO na cienkich obiektach.
+    //
+    // Pole `ssao_bias` zostało w uniformie, bo `PostSettings` jest
+    // publicznym API i demo mogą je ustawiać; shader używa go teraz
+    // jako dolnego limitu `inv_thickness` (patrz niżej), więc wartość
+    // nadal ma wpływ na wynik.
 
     // Promień w METACH. Próbki rozłożone w PLASZCZYŹNIE obrazu
     // mają różną odległość, więc ich przesunięcie w UV musi rosnąć
@@ -533,51 +550,82 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
         1.0 / (p.proj.x * linear),
     );
 
+    // Wzór MSAO operuje na `1 / głębokość` zamiast na samej głębokości,
+    // bo w tej skali odległość jest liniowa. Bez tego próbki blisko
+    // kamery miałyby nieproporcjonalnie duży wpływ na wynik i AO
+    // byłoby silne tylko na bliskich powierzchniach.
+    //
+    // `bias` wchodzi tu jako **margines grubości**: zwiększa tyle, o ile
+    // kula jest „grubsza" niż promień, przez co próbki tuż przy
+    // powierzchni wypadają poza kulę. To dokładnie jego dawna rola
+    // („nie próbkuj samej powierzchni") — tylko wyrażona w skali
+    // odwróconej głębokości, a nie jako przesunięcie środka.
+    let inv_thickness = 1.0 / max(radius + p.ssao.z, 1e-4);
+    let inv_range = inv_thickness * (1.0 / max(linear, 1e-4));
+    // Referencyjna głębokość „przodu kuli" w tej samej skali.
+    let front_depth = inv_thickness - 0.5;
+
     var occlusion = 0.0;
-    for (var i = 0; i < AOAO_SAMPLES; i = i + 1) {
+    var pairs_used = 0.0;
+    for (var i = 0; i < AO_PAIRS; i = i + 1) {
         let fi = f32(i);
         // Spirala: kąt rośnie liniarnie z `i`, promień jak `sqrt`,
         // żeby próbki równomiernie wypełniły koło.
         let angle = fi * AO_SPIRAL;
-        let dist = radius * sqrt((fi + 0.5) / f32(AOAO_SAMPLES));
+        let dist = radius * sqrt((fi + 0.5) / f32(AO_PAIRS));
         let offset = vec2<f32>(cos(angle), sin(angle)) * dist * uv_per_meter;
-        let sample_uv = uv + offset;
-        // Próbka poza kadrem: nie mamy tam danych, więc nie zaciemniamy.
-        // Liczenie tego jako „zasłonięte" dawałoby ciemne krawędzie kadru.
-        if (sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0) {
+        // PARA: dwie próbki symetryczne względem piksela. To one
+        // odróżniają MSAO od zwykłego SSAO — patrz komentarz sekcji.
+        let uv_a = uv + offset;
+        let uv_b = uv - offset;
+        // Para wychodząca poza kadr: nie mamy tam danych, więc całą
+        // parę pomijamy. Liczenie jej jako „otwartej" dawałoby ciemne
+        // krawędzie kadru.
+        let in_frame = uv_a.x > 0.0 && uv_a.x < 1.0 && uv_a.y > 0.0 && uv_a.y < 1.0
+            && uv_b.x > 0.0 && uv_b.x < 1.0 && uv_b.y > 0.0 && uv_b.y < 1.0;
+        if (!in_frame) {
             continue;
         }
-        let sd = depth_raw(sample_uv);
-        if (sd >= 1.0) {
+        let sd_a = depth_raw(uv_a);
+        let sd_b = depth_raw(uv_b);
+        // Niebo (`d = 1.0`) nie zasłania niczego. Pomijamy taką parę
+        // w całości — inaczej krawędź nieba ciemniałaby okolice.
+        if (sd_a >= 1.0 || sd_b >= 1.0) {
             continue;
         }
-        let S = view_position(sample_uv, linear_from_raw(sd));
-        // Wektor od środka do próbki, w metrach.
-        let V = S - center;
-        let v_len = length(V);
-        if (v_len < 1e-4) {
-            continue;
-        }
-        // Klasyczny test na KULĘ (Crytek / Horizon Zero Dawn):
-        // punkt zacienia, jeśli leży WEWNĄTRZ kuli o promieniu `radius`
-        // i jednocześnie bliżej oka niż środek kuli.
-        //
-        // `dot(V, N) > 0` oznacza fragment leżący PRZED powierzchnią
-        // (po stronie oka) — czyli zasłania. Poniżej powierzchni
-        // to środek kuli, który niczego nie zasłania.
-        let cos_angle = dot(V, N) / v_len;
-        if (cos_angle <= 0.0 || v_len >= radius) {
-            continue;
-        }
-        // Zakres kątowy, na którym ta próbka zasłania. Im bliżej
-        // powierzchni, tym szerszy pas — dlatego `radius/dist`, a nie
-        // liniowo. Dzięki temu wynik jest niezależny od gęstości próbek.
-        let range_check = smoothstep(0.0, 1.0, radius / v_len);
-        // `1/π` to zakładana gęstość rozkładu kierunków (kula).
-        occlusion = occlusion + range_check * (1.0 / 3.14159265);
+        pairs_used = pairs_used + 1.0;
+
+        // „Disocclusion": jak głęboko próbka wnika w kulę.
+        // < 0 = pełne przesłony, > 1 = wcale (za kulą).
+        let dis1 = (1.0 / linear_from_raw(sd_a)) * inv_range - front_depth;
+        let dis2 = (1.0 / linear_from_raw(sd_b)) * inv_range - front_depth;
+
+        // Pseudo-disocclusion: ograniczenie disocclusion od dołu.
+        // To sedno metody — jeśli obie próbki mają tę samą wartość
+        // (obie na powierzchni albo obie daleko), ograniczenie je
+        // wyrównuje i para daje ~0. Jeśli jedna zasłania, a druga nie,
+        // różnica zostaje. `rays.z` to `xRejectFadeoff` z MSAO.
+        let p1 = clamp(p.rays.z * dis1, 0.0, 1.0);
+        let p2 = clamp(p.rays.z * dis2, 0.0, 1.0);
+
+        // Test pary z MiniEngine: dwie wzajemnie ograniczone wartości,
+        // minus iloczyn (usuwa podwójne policzenie tego samego cienia
+        // w obu próbkach). Wynik ograniczamy do 0..1, bo suma z ujemnymi
+        // `dis` mogłaby wyjść poza zakres i odwrócić sens AO.
+        occlusion = occlusion + clamp(
+            clamp(dis1, p2, 1.0) + clamp(dis2, p1, 1.0) - p1 * p2,
+            0.0,
+            1.0
+        );
     }
 
-    let ao = clamp(1.0 - occlusion, 0.0, 1.0);
+    // Średnia, a nie suma — inaczej zmiana liczby par zmieniałaby
+    // jasność AO. `pairs_used` bywa 0 na krawędzi kadru; wtedy
+    // zwracamy 1.0 (brak cienia), żeby nie dzielić przez zero.
+    if (pairs_used < 0.5) {
+        return vec4<f32>(1.0);
+    }
+    let ao = clamp(1.0 - occlusion / pairs_used, 0.0, 1.0);
     // `intensity` pogłębia narożniki. Bez niego AO jest zbyt płytkie
     // i ledwo widać.
     let ao_pow = pow(ao, p.ssao.w);

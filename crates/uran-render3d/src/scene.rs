@@ -153,6 +153,21 @@ pub struct Atmosphere {
     /// podstawowy kolor można ustawić neutralnie i nieba nie trzeba
     /// przeliczać ręcznie.
     pub fog_color: [f32; 3],
+    /// Wysokość (w metrach), na której mgła całkiem zanika.
+    ///
+    /// ## Dlaczego to pole istnieje
+    ///
+    /// Mgła nie jest jednorodna: jej gęstość rośnie w dół i zanika
+    /// powyżej pewnej wysokości. Bez tego parametru mgła zasłaniała
+    /// tak samo kamień leżący na ziemi i dach domu stojącego 30 m
+    /// wyżej — a w realnym świecie dach jest czysty.
+    ///
+    /// Shader liczy analityczny całkowity gęstości wzdłuż promienia
+    /// oka (jak WickedEngine w `fogHF.hlsli`), więc ta wartość wprost
+    /// steruje tym, jak szybko mgła zanika ku górze.
+    ///
+    /// 0 wyłącza ten efekt i daje z powrotem jednolitą mgłę.
+    pub fog_height: f32,
 }
 
 impl Default for Atmosphere {
@@ -166,6 +181,11 @@ impl Default for Atmosphere {
             // Lekko chłodna, pasująca do niebieskiego ambientu. Ciepła mgła
             // przy zimnym otoczeniu wygląda jak brud na obiektywie.
             fog_color: [0.58, 0.70, 0.86],
+            // 55 m: powyżej wierzchu typowych budynków mgła już dawno
+            // zniknęła, więc dachy i kominy zostają czyste, a dolne
+            // piętra i ulica toną. 0 dałoby z powrotem jednolitą
+            // „mleczną" warstwę na każdej wysokości.
+            fog_height: 55.0,
         }
     }
 }
@@ -932,6 +952,9 @@ impl Renderer3d {
                 self.atmosphere.fog_color[1],
                 self.atmosphere.fog_color[2],
             ],
+            // `x` steruje zanikaniem mgły ku górze. Gdy 0, shader
+            // używa jednolitej gęstości i zachowuje się jak wcześniej.
+            fog: [self.atmosphere.fog_height, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
         // tablica modeli: jeden wpis na obiekt

@@ -26,3 +26,4 @@ Desktop.ini
 # --- Opcjonalnie: duże assety (jeśli będą >100MB, lepiej użyć Git LFS) ---
 # /uran-game/assets/**/*.png
 # /uran-game/assets/**/*.mp3
+dirtycode/

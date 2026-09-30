@@ -1,20 +1,22 @@
-//! Import modeli 3D: `.obj` + `.mtl` z teksturami.
+//! Import modeli 3D: `.obj` + `.mtl` z teksturami oraz `.glb` (glTF 2.0).
 //!
 //! ## Obsługiwane formaty
 //!
-//! | Format | Status |
-//! |--------|--------|
-//! | `.obj` + `.mtl` + `.png` | ✅ pełne wsparcie |
-//! | `.glb` / `.gltf` | ❌ osobny zadanie (patrz `Dlaczego nie glTF`) |
-//! | `.fbx`, `.blend` | ❌ właścicielskie formaty Blendera |
+//! | Format | Status | Uwagi |
+//! |--------|--------|-------|
+//! | `.obj` + `.mtl` + `.png` | ✅ pełne wsparcie | statyczne bryły |
+//! | `.glb` (glTF 2.0) | ✅ siatka + materiały + szkielet | patrz `gltf` |
+//! | `.gltf` + osobne pliki | ❌ | wymaga czytania z dysku |
+//! | `.fbx`, `.blend` | ❌ | właścicielskie formaty Blendera |
 //!
-//! ## Dlaczego nie glTF od razu
+//! ## Dlaczego glTF jest osobnym modułem
 //!
-//! `.gltf` to JSON, ale tekstury w `.glb` bywają osadzone w BIN-chunku,
-//! a w `.gltf` osobno wraz z `images[].uri` i `samplers`/`filters`.
-//! To osobny czytnik z własnymi testami na bajtach. Dorzucenie go „na
-//! szybko" bez pokrycia testami oznaczałoby debugowanie formatu
-//! na plikach użytkownika, więc świadomie zostawiamy to osobno.
+//! Oba formaty mają wspólne tylko „czytają wierzchołki". glTF przy okazji
+//! niesie szkielet, wagi skinningu i materiały PBR, więc ma własny format
+//! wierzchołka (`gltf::SkinVertex`, 64 B) i własny potok renderujący
+//! (`crate::skin`). Mieszanie tego z `Vertex` (44 B) rozszerzyłoby każdą
+//! bryłę świata o 55% rozmiaru wierzchołka — za cenę, której płaciłby
+//! kod w ogóle niemający postaci.
 //!
 //! ## Ścieżka użycia
 //!
@@ -27,7 +29,15 @@
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ```no_run
+//! let ch = uran_render3d::import::gltf::load_from_file("postac.glb")?;
+//! println!("{} kości, {} siatek", ch.joints.len(), ch.meshes.len());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
+pub mod gltf;
+pub mod json;
 pub mod mtl;
 pub mod obj;
 

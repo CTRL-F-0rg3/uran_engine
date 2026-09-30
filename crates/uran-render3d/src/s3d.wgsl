@@ -44,6 +44,9 @@ struct Scene {
     stylize: vec4<f32>,
     // x = gęstość mgły, yzw = kolor mgły
     atmos: vec4<f32>,
+    // x = wysokość, na której mgła całkiem zanika (0 = jednolita mgła),
+    // yzw = rezerwa na przyszłe parametry pogodowe.
+    fog: vec4<f32>,
 }
 
 struct Model {
@@ -83,6 +86,14 @@ struct Material {
 @group(1) @binding(1) var normal_tex: texture_2d<f32>;
 @group(1) @binding(2) var orm_tex: texture_2d<f32>;
 @group(1) @binding(3) var samp: sampler;
+
+// --- szkielet postaci ---
+// Macierze kości w grupie 2, a NIE w grupie 0 z pozostałymi zasobami.
+// Powód: grupa 0 jest wspólna dla potoku brył i postaci, a siatka
+// statyczna nie ma kości — gdyby macierz kości leżała w grupie 0,
+// każda bryła świata musiałaby dostać sztuczny bufor 64 kości.
+// Dzięki osobnej grupie statyczne DrawCmd w ogóle jej nie dotykają.
+@group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
 @group(1) @binding(4) var<uniform> mat: Material;
 
 struct VsOut {
@@ -165,6 +176,93 @@ struct SkyOut {
 /// Nie potrzebujemy geometrii — kierunek promienia odtwarzamy w shaderze
 /// fragmentu z `inv_view_proj` i współrzędnych piksela. Trzy wierzchołki
 /// dają pełny prostokąt za zero bajtów bufora.
+// --- skinning -------------------------------------------------------------
+//
+// Wierzchołek postaci wpływa na cztery koście jednocześnie. Klasyczne
+// „linear blend skinning": pozycję i normalną liczymy jako ważoną sumę
+// przekształceń, a nie jako średnią pozycji — różnica widać przy
+// zginaniu łokcia, gdzie zwykłe uśrednianie „zwija” rękę.
+
+/// Ważona suma macierzy kości wskazanych przez wierzchołek.
+fn skin_matrix(j: vec4<f32>, w: vec4<f32>) -> mat4x4<f32> {
+    // W pliku indeksy kości leżą w `JOINTS_0` jako `u16`, ale loader
+    // trzyma je jako `f32` (wartości całkowite): w WGSL nie da się
+    // czytać `vec4<u32>` z bufora zadeklarowanego jako `Float32x4`
+    // bez osobnego formatu w layoucie. Rzutujemy więc tutaj.
+    return bones[u32(j.x)] * w.x
+        + bones[u32(j.y)] * w.y
+        + bones[u32(j.z)] * w.z
+        + bones[u32(j.w)] * w.w;
+}
+
+/// Wagi znormalizowane do sumy 1.
+///
+/// Plik gwarantuje sumę ~1, ale eksporterzy bywają niedokładni
+/// (0.98 albo 1.03), a złe wagi dają ciemne smugi na krawędziach
+/// skóry. Przy całkowicie zerowej wadzie wybieramy pierwszą kość,
+/// żeby wierzchołek nie skoczył do początku układu współrzędnych.
+fn normalized_weights(w: vec4<f32>) -> vec4<f32> {
+    let s = w.x + w.y + w.z + w.w;
+    if s < 1e-5 {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.0);
+    }
+    return w / s;
+}
+
+/// Vertex shader postaci: skinning w czterech wpływach.
+///
+/// Wyjście jest **identyczne** z [`vs_main`] — ten sam `VsOut`, to
+/// samo `fs_main`. Dzięki temu postać przechodzi dokładnie tą samą
+/// ścieżką oświetlenia, co bryły: ta sama rampa anime, ten sam SSS,
+/// ten sam materiał. Osobny potok dotyczy wyłącznie tego, skąd biorą
+/// się pozycja i normalna.
+@vertex
+fn vs_skin(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) joints: vec4<f32>,
+    @location(3) weights: vec4<f32>,
+    @location(4) uv: vec2<f32>,
+    // `instance_index` liczy od 1, bo `first_instance` to 1 — ta sama
+    // konwencja co w `vs_main`.
+    @builtin(instance_index) inst: u32,
+) -> VsOut {
+    let m = models[inst - 1u];
+    let w = normalized_weights(weights);
+    // Macierz świata z uwzględnieniem kości: ważona suma przekształceń
+    // kości, a NIE średnia pozycji — różnica widać przy zginaniu łokcia.
+    let skin = skin_matrix(joints, w);
+    let world = m.model * skin * vec4<f32>(position, 1.0);
+
+    var out: VsOut;
+    out.clip_pos = scene.view_proj * world;
+    // Normalna jest wektorem: zero na końcu zachowuje kierunek
+    // i nie wprowadza przesunięcia.
+    out.world_normal = normalize((m.model * skin * vec4<f32>(normal, 0.0)).xyz);
+    out.world_pos = world.xyz;
+    out.color = srgb_to_linear(vec3<f32>(1.0)) * srgb_to_linear(m.tint.rgb);
+    out.uv = uv;
+    // Tangent jak w `vs_main` — oś X modelu, bo ten asset nie dostarcza
+    // własnych tangentów (w `glTF` są opcjonalne i tu ich nie ma).
+    out.tangent = (m.model * vec4<f32>(1.0, 0.0, 0.0, 0.0)).xyz;
+    return out;
+}
+
+/// Odpowiednik [`vs_skin`] dla passu cieni: zwraca tylko pozycję.
+@vertex
+fn vs_skin_shadow(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) joints: vec4<f32>,
+    @location(3) weights: vec4<f32>,
+    @location(4) uv: vec2<f32>,
+    @builtin(instance_index) inst: u32,
+) -> @builtin(position) vec4<f32> {
+    let m = models[inst - 1u];
+    let skin = skin_matrix(joints, normalized_weights(weights));
+    return scene.light_view_proj * m.model * skin * vec4<f32>(position, 1.0);
+}
+
 @vertex
 fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
     // Identyczna siatka co w `post.wgsl` (`vs_fullscreen`): 3 wierzchołki
@@ -452,6 +550,36 @@ fn mie_phase(cos_theta: f32) -> f32 {
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
+/// Anizotropia rozpraszania dla mgły.
+///
+/// ## Po co dwie fazy
+///
+/// `mie_phase` powyżej ma `g = 0.76` i służy **niebu** — tam chcemy
+/// wąski, bardzo wyraźny aureol wokół tarczy słonecznej.
+///
+/// Mgła gruntowa jest innym ośrodkiem: krople są duże i dobrze mieszane,
+/// więc rozpraszanie jest niemal izotropowe. `g = 0.6` (ta sama wartość
+/// co `FOG_INSCATTERING_PHASE_G` w WickedEngine) daje mgle łagodne
+/// rozjaśnienie w stronę słońca zamiast ostrej plamy.
+///
+/// WGSL nie ma tu czegoś takiego jak domyślny argument, więc `g`
+/// jest jawnym parametrem.
+fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    // `max` w mianowniku chroni przed potęgą ujemnej liczby po
+    // zaokrągleniu `cos_theta` lekko poniżej -1.
+    let denom = 1.0 + g2 - 2.0 * g * cos_theta;
+    return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
+}
+
+/// Anizotropia rozpraszania mgły gruntowej.
+///
+/// 0.6 to ta sama wartość, którą WickedEngine używa dla mgły
+/// (`FOG_INSCATTERING_PHASE_G` w `fogHF.hlsli`). Nie jest identyczna
+/// z `mie_phase` dla nieba — i nie powinna być.
+const FOG_PHASE_G: f32 = 0.6;
+
+
 @fragment
 fn fs_main(in: VsOut) -> GBuffer {
     // `normalize(vec3(0))` to NaN, a NaN w kolorze wychodzi czarny —
@@ -670,16 +798,91 @@ fn fs_main(in: VsOut) -> GBuffer {
     // --- światło własne
     let emissive = mat.tint.rgb;
 
-    // --- mgła: dalekie obiekty zlewają się z niebem
+    // --- mgła wysokościowa ---------------------------------------------
     //
-    // Wykładniczy spadek (`1 - e^(-d·ρ)`) zamiast liniowego. Linia dawała
-    // widoczną granicę „mgły startującej w 60 m”, której w rzeczywistości
-    // nie ma. Dokładamy rozpraszanie Mie, żeby mgła świeciła mocniej
-    // w kierunku słońca — bez tego jest szarą zacieczką na obiektywie.
-    let dist = length(scene.eye.xyz - in.world_pos);
-    let view_to_sun = dot(-V, L);
-    let fog_amount = 1.0 - exp(-dist * scene.atmos.x);
-    let fog_color = srgb_to_linear(scene.atmos.yzw) * (1.0 + mie_phase(view_to_sun) * 2.4);
+    // Zamiast `1 - exp(-dist · ρ)` liczymy **analityczny całkowity**
+    // gęstości wzdłuż promienia oka. Gęstość mgły rośnie z wysokością
+    // (zanika wyżej), a promień często przebiega skośnie, więc wzdłuż
+    // niego trzeba scałkować `exp(-h/H)`. Wzór analityczny pochodzi z
+    // iquilezles.org i jest ten sam, którego używa WickedEngine
+    // w `fogHF.hlsli` (`GetFogAmount`).
+    //
+    // Co to zmienia w obrazie:
+    //   * mgła **zbiera się u dołu** — horyzont jest gęstszy niż
+    //     powietrze nad głową. Poprzedni wzór dawał jednolitą
+    //     „mleczną" warstwę na każdej wysokości, przez co odległe
+    //     budynki ginęły tak samo niezależnie od tego, czy stoją
+    //     na ziemi, czy wiszą w powietrzu;
+    //   * patrzenie w słońce **rozjaśnia** mgłę, a w bok nie — przez
+    //     fazę Henyeya-Greensteina. Wcześniej ten efekt był, ale jako
+    //     stały mnożnik `2.4`, niezależny od kąta patrzenia.
+    //
+    // `scene.fog.x` to wysokość zanikania mgły. Reszta struktury
+    // `atmos` (x = gęstość, yzw = kolor) zostaje jak była.
+    let O = scene.eye.xyz;
+    let to_frag = in.world_pos - O;
+    let dist = length(to_frag);
+    // Nazwa `V` jest już zajęta w `fs_main` (kierunek do oka), więc
+    // kierunek promienia nazywamy inaczej — WGSL nie przepuszcza
+    // ponownej definicji w tym samym zakresie.
+    let ray_dir = to_frag / max(dist, 1e-4);
+
+    // `scene.fog.x` to wysokość zanikania mgły. Gdy wynosi 0 (albo jest
+    // ujemna z powodu błędu w konfiguracji), wypadamy w jednolity
+    // przypadek: gęstość stała wzdłuż całego promienia. To zachowanie
+    // sprzed wprowadzenia mgły wysokościowej, więc stare sceny wyglądają
+    // dokładnie tak samo.
+    var fog_amount: f32;
+    let h_end = scene.fog.x;
+    if (h_end <= 0.01) {
+        // Jednolita gęstość: `1 - e^(-ρ·d)`.
+        fog_amount = 1.0 - exp(-dist * scene.atmos.x);
+    } else {
+        // `6.907755 = ln(1000)`: tyle potrzeba, żeby gęstość spadła
+        // tysiąckrotnie na wysokości `h_end`.
+        let fog_falloff = 6.907755 / h_end;
+
+        let origin_h = O.y;
+        let vz = ray_dir.y;
+        // `abs()` chroni przed dzieleniem przez ~0, czyli patrzeniem
+        // idealnie poziomo — wtedy całkowita jest graniczna.
+        let effective_z = max(abs(vz), 0.001);
+
+        // Wysokość końca promienia: izolacja y z równania parametrycznego
+        // prostej `O + t·V`.
+        let end_h = dist * vz + origin_h;
+        // Część promienia poniżej dolnej granicy ma gęstość stałą, więc
+        // daje się scałkować zwykłym mnożeniem przez długość.
+        let min_h = min(origin_h, end_h);
+        let base_distance = clamp(-min_h / effective_z, 0.0, dist);
+        let exp_distance = dist - base_distance;
+        let height_falloff = max(min_h, 0.0);
+
+        // Analityczna całkowita części eksponencjalnej — ten sam wzór co
+        // w WickedEngine (`fogHF.hlsli`, `GetFogAmount`), przy dolnej
+        // granicy gęstości równej 0.
+        let integral = exp(-height_falloff * fog_falloff)
+            * (1.0 - exp(-exp_distance * effective_z * fog_falloff))
+            / (effective_z * fog_falloff);
+
+        let optical_depth = scene.atmos.x * (base_distance + integral);
+        fog_amount = 1.0 - exp(-optical_depth);
+    }
+
+    // Faza Henyeya-Greensteinna: rozpraszanie jest silne wprost na
+    // słońce i słabe w przeciwnym kierunku. To ona nadaje mgle
+    // kierunek — bez niej mgła jest szarą folią niezależnie od tego,
+    // gdzie jest słońce.
+    // Faza Henyeya-Greensteinna: rozpraszanie jest silne wprost na
+    // słońce i słabe w przeciwnym. To ona nadaje mgle kierunek — bez
+    // niej mgła jest szarą folią niezależnie od tego, gdzie słońce.
+    //
+    // Używamy `ray_dir`, nie `V`: `V` w `fs_main` to kierunek **do oka**,
+    // a tu potrzebujemy kierunku **od oka**. To wektory przeciwne — przy
+    // rzucie w stronę słońca dałyby odwrotną odpowiedź i mgła świeciłaby
+    // w złym miejscu.
+    let hg = henyey_greenstein(dot(-ray_dir, L), FOG_PHASE_G);
+    let fog_color = srgb_to_linear(scene.atmos.yzw) * (1.0 + hg * 2.4);
 
     // `specular_ibl` jest osobnym składnikiem, bo liczy odbicie
     // otoczenia w miejscu, którego diffuse w ogóle nie bierze pod uwagę.

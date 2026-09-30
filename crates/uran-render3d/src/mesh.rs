@@ -275,11 +275,27 @@ pub struct SceneUniform {
     /// w shaderze sceny — mieszanie dwóch barw w samym oświetleniu
     /// kosztowałoby tyle, ile cały gradient liczony w post-processingu.
     pub atmos: [f32; 4],
+    /// `x` = wysokość zanikania mgły (m), `y..w` = rezerwa.
+    ///
+    /// ## Po co osobne `vec4`, a nie dołożenie pola do `atmos`
+    ///
+    /// WGSL wymaga wyrównania każdego pola `vec4` na 16 B. Dołożenie
+    /// piątej liczby do `atmos` wymusiłoby albo jej wyrównanie do
+    /// granicy 16 B (marnując 12 B), albo rozbicie `atmos` na dwa
+    /// `vec4` — a to oznaczałoby zmianę deklaracji w `s3d.wgsl`
+    /// i przesunięcie wszystkich dalszych bindingów. Osobne pole
+    /// `vec4` kosztuje 16 B i nie rusza niczego innego.
+    ///
+    /// Gdy `x = 0`, shader traktuje mgłę jako jednolitą (stare
+    /// zachowanie), więc pole jest wstecz kompatybilne.
+    pub fog: [f32; 4],
 }
 
 /// Rozmiar uniformu jest częścią kontraktu z shaderem: zmiana jednego bez
 /// drugiego kończy się błędem walidacji wgpu dopiero podczas renderowania.
-const _: () = assert!(std::mem::size_of::<SceneUniform>() == 400);
+///
+/// 416 B = 400 B (wcześniejszy rozmiar) + 16 B nowego pola `fog`.
+const _: () = assert!(std::mem::size_of::<SceneUniform>() == 416);
 
 /// Transformacja i kolor jednego obiektu w scenie.
 ///

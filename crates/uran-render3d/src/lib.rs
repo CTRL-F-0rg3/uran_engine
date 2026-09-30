@@ -109,6 +109,12 @@ mod shader_tests {
             "fn vs_sky",
             "fn fs_main",
             "fn fs_sky",
+            // Skinning. Te dwa muszą istnieć obok `vs_main`, bo potok
+            // postaci różni się wyłącznie punktem wejścia — `fs_main`
+            // jest wspólny, więc postać oświetla się dokładnie tak
+            // jak bryły.
+            "fn vs_skin",
+            "fn vs_skin_shadow",
         ] {
             assert!(
                 src.contains(entry),
@@ -184,11 +190,223 @@ mod shader_tests {
         );
     }
 
-    /// Rozmiar uniformu materiału musi zgadzać się z obiektem w WGSL.
+    /// Skinning musi mieć swój własny binding kości — w grupie 2.
     ///
-    /// `MaterialUniform` ma asercję rozmiaru w `material.rs`, ale ta
-    /// nie wie nic o WGSL. `vec4` w obu miejscach musi dać 96 B —
-    /// inaczej wgpu odrzuci bind group dopiero przy renderowaniu.
+    /// Gdyby macierz kości leżała w grupie 0 (wspólnej z `models`),
+    /// każda statyczna bryła świata musiałaby dostać sztuczny bufor
+    /// na 73 macierze. Osobna grupa sprawia, że `DrawCmd` dla ścian
+    /// w ogóle jej nie dotyka.
+    #[test]
+    fn skinning_ma_wlasny_binding_kosci() {
+        let src = include_str!("s3d.wgsl");
+        assert!(
+            src.contains("@group(2) @binding(0) var<storage, read> bones"),
+            "s3d.wgsl nie deklaruje kości w grupie 2"
+        );
+        // Wagi muszą być normalizowane w shaderze: plik gwarantuje sumę
+        // ~1, ale eksporterzy bywają niedokładni, a nieznormalizowane
+        // wagi dają ciemne smugi na krawędziach skóry.
+        assert!(
+            src.contains("normalized_weights"),
+            "s3d.wgsl nie normalizuje wag skinningu"
+        );
+    }
+
+    /// Efekty nie mogą być agresywne **domyślnie**.
+    ///
+    /// Ustawienia domyślne są tym, co dostaje demo, które niczego nie
+    /// ustawia — a większość ich nie ustawia. Za agresywne wartości
+    /// sprawiają, że obraz wygląda „chory" (anamorficzne kreski, szare
+    /// plamy AO, plamiste niebo od bloomu) zamiast atrakcyjny.
+    ///
+    /// Test jest celowo wartościowy, a nie „mniejszy niż poprzednio":
+    /// gdyby ktoś podniósł `ssao_strength` do 0.9, test by zadal
+    /// pytanie „po co", zamiast przechodzić po cichu.
+    #[test]
+    /// Ostatnie wartości dobrane odręcznie — traktowane jako kontrakt.
+    ///
+    /// Test `domyslne_efekty_sa_lagodne` pilnuje tylko górnych progów
+    /// („nie za mocno"). Ten pilnuje dokładnych liczb, bo efekt, o który
+    /// chodziło, brzmiał wprost: obraz był mocno przepłacony efektami
+    /// i każde dalsze podbicie któregokolwiek z tych parametrów wraca
+    /// do tego samego problemu.
+    ///
+    /// Wyjątek: `dof_max_blur` ma minimalne, ale niezerowe granice —
+    /// przy 0.0 shader dzieli przez `max(d, 0.001)`, co daje nieskończony
+    /// blur na pikselach w płaszczyźnie ogniskowania.
+    #[test]
+    fn domyslne_sa_dokladnie_takie_jak_zamowiono() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+
+        assert_eq!(p.ssao_strength, 0.21, "siła SSAO");
+        assert_eq!(p.ssao_radius, 0.12, "promień SSAO w metrach");
+        assert_eq!(p.outline_strength, 0.02, "kontur");
+        assert_eq!(p.ssr_strength, 0.11, "odbicie ekranowe");
+        assert_eq!(p.dof_max_blur, 0.10, "maks. blur DoF");
+    }
+
+    /// Wszystkie cztery powyższe wartości muszą być **bardzo małe** —
+    /// to efekt świadomie wyłączony, nie tylko osłabiony.
+    ///
+    /// Rozróżnienie jest ważne przy diagnostyce: jeśli AO znika
+    /// całkowicie, to oczywista przyczyna to zbyt mały `ssao_strength`
+    /// albo `ssao_radius`, a nie błąd w shaderze.
+    #[test]
+    fn cztery_efekty_sa_zasadniczo_wylaczone() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+        assert!(p.ssao_strength <= 0.25, "AO nadal aktywne");
+        assert!(p.ssao_radius <= 0.15, "promień AO zbyt duży");
+        assert!(p.outline_strength <= 0.05, "kontur nadal aktywny");
+        assert!(p.ssr_strength <= 0.15, "SSR nadal aktywne");
+        assert!(p.dof_max_blur <= 0.5, "DoF nadal aktywny");
+    }
+
+    fn domyslne_efekty_sa_lagodne() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+
+        // AO: najbardziej szkodliwy przy dużym promieniu — zaciemnia
+        // cały obrys obiektu, a nie sam styk z podłożem.
+        assert!(
+            p.ssao_strength <= 0.6,
+            "ssao_strength = {}",
+            p.ssao_strength
+        );
+        assert!(p.ssao_radius <= 0.4, "ssao_radius = {}", p.ssao_radius);
+        assert!(
+            p.ssao_intensity <= 1.3,
+            "ssao_intensity = {}",
+            p.ssao_intensity
+        );
+
+        // Kontur powyżej ~0.4 zamienia postać w plakat z grubą ramą.
+        assert!(
+            p.outline_strength <= 0.4,
+            "outline = {}",
+            p.outline_strength
+        );
+
+        // Anamorficzna poświata powyżej 0.6 daje poziome kreski
+        // na każdej jasnej plamie — obraz wygląda „chory".
+        assert!(p.anamorphic <= 0.25, "anamorphic = {}", p.anamorphic);
+        assert!(p.lens_flare <= 0.20, "lens_flare = {}", p.lens_flare);
+        assert!(p.god_rays <= 0.30, "god_rays = {}", p.god_rays);
+
+        // Bloom 0.32+ przy progu 1.15 świecił na każdej jasnej
+        // powierzchni zamiast tylko na źródłach.
+        assert!(p.bloom <= 0.20, "bloom = {}", p.bloom);
+
+        // Winieta powyżej 0.25 przyciemnia narożnik jak defekt kadru.
+        assert!(p.vignette <= 0.20, "vignette = {}", p.vignette);
+
+        // Split tone powyżej 0.4 przesuwa całą paletę w błękit/bursztyn.
+        assert!(p.split_tone <= 0.40, "split_tone = {}", p.split_tone);
+
+        // Antyaliasing to NIE efekt — obniżanie dodaje schodki.
+        assert!(
+            p.antialias >= 0.5,
+            "antialias = {} — to nie efekt",
+            p.antialias
+        );
+    }
+
+    /// Odrzucanie próbek AO musi działać domyślnie.
+    ///
+    /// `0` oznaczałoby całkowite wyłączenie odrzucania, a wtedy
+    /// `ssao_reject_fadeoff` cicho nic nie robiłby, a `fs_ssao`
+    /// zachowywałby się jak stary test kulowy.
+    #[test]
+    fn odrzucanie_ao_ma_sensowna_domyslna_wartosc() {
+        use crate::postfx::PostSettings;
+        let p = PostSettings::default();
+        assert!(
+            (50.0..=200.0).contains(&p.ssao_reject_fadeoff),
+            "ssao_reject_fadeoff = {} — poza zakresem użytecznym 50..=200",
+            p.ssao_reject_fadeoff
+        );
+    }
+
+    /// Uniform musi przenosić `reject_fadeoff` do shadera.
+    ///
+    /// Parametr jedzie w `rays.z` (pole rezerwowe), bo dopisanie
+    /// nowego `vec4` przesunęłoby wszystkie późniejsze pola.
+    #[test]
+    fn uniform_oddaje_parametr_do_pola_rays_z() {
+        use crate::postfx::{PostParams, PostSettings};
+        let s = PostSettings::default();
+        let p = PostParams::from_settings(
+            &s,
+            /* w */ 1920.0,
+            /* h */ 1080.0,
+            /* time */ 0.0,
+            /* sun */ [0.5; 4],
+            /* near */ 0.1,
+            /* far */ 1000.0,
+            /* focus */ 1.0,
+            /* tan_half_fov */ 0.5,
+            /* aspect */ 16.0 / 9.0,
+        );
+        assert_eq!(
+            p.rays[2], s.ssao_reject_fadeoff,
+            "rays.z musi nieść ssao_reject_fadeoff dla `fs_ssao`"
+        );
+    }
+
+    /// Mgła musi liczyć **analityczny całkowity** gęstości, a nie
+    /// `1 - exp(-dist · ρ)`.
+    ///
+    /// ## Dlaczego to pilnujemy testem
+    ///
+    /// Wersja liniowa daje jednolitą, „mleczną" warstwę na każdej
+    /// wysokości — dach domu tonął w mgle tak samo jak ulica pod nim.
+    /// WickedEngine liczy to analitycznie (`fogHF.hlsli`), więc powtarzamy
+    /// u siebie ten sam wzór, żeby zachować zgodny wygląd.
+    #[test]
+    fn mgla_jest_wysokosciowa_a_nie_jednolita() {
+        let src = include_str!("s3d.wgsl");
+        assert!(
+            src.contains("base_distance") && src.contains("exp_distance"),
+            "s3d.wgsl nie ma analitycznej całkowitej mgły (brak rozdzielenia \
+             na część bazową i eksponencjalną)"
+        );
+        // Stary, jednolity wzór może istnieć TYLKO jako wypadek przy
+        // `fog.x == 0`. Poza tym nie powinien się pojawiać.
+        assert!(
+            src.contains("fog_amount = 1.0 - exp(-dist * scene.atmos.x)"),
+            "s3d.wgsl nie ma nawet przypadku zapasowego dla mgły jednolitej"
+        );
+        // Anizotropia rozpraszania musi być z parametrizowana — mgła
+        // gruntowa i niebo to różne ośrodki o różnej fazie.
+        assert!(
+            src.contains("henyey_greenstein(dot(-ray_dir, L), FOG_PHASE_G)"),
+            "faza mgły musi liczyć kąt z kierunku promienia, nie z `V` \
+             (kierunek do oka) — inaczej mgła świeci w złym miejscu"
+        );
+    }
+
+    /// Rozmiar uniformu sceny musi zgadzać się z WGSL.
+    ///
+    /// `fog: vec4<f32>` doszło do struktury `Scene`, więc uniform urosnął
+    /// o 16 B. Test chroni przed sytuacją, w której Rust i shader
+    /// rozjeżdżają się cicho, a wgpu odrzuci bind group dopiero
+    /// podczas renderowania.
+    #[test]
+    fn uniform_sceny_ma_miejsce_na_mgle() {
+        let src = include_str!("s3d.wgsl");
+        assert!(
+            src.contains("fog: vec4<f32>"),
+            "s3d.wgsl nie deklaruje pola `fog`"
+        );
+        assert_eq!(
+            std::mem::size_of::<crate::mesh::SceneUniform>() % 16,
+            0,
+            "SceneUniform musi być wielokrotnością 16 B dla WGSL"
+        );
+    }
+
+    /// Rozmiar uniformu materiału musi zgadzać się z obiektem w WGSL.
     #[test]
     fn material_uniform_is_six_vec4s() {
         assert_eq!(

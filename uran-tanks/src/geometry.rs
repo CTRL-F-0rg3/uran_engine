@@ -5,7 +5,7 @@
 //! są **dzielone przez narożniki**, żeby sąsiednie ściany nie miały
 //! gładszych krawędzi — inaczej prostopadłościan wygląda jak bańka mydlana.
 
-use uran_math::{Vec3, Vec4};
+use uran_math::Vec3;
 use uran_render3d::{Mesh, Vertex};
 
 /// Jedna ściana: cztery narożniki w kolejności zgodnej z ruchem

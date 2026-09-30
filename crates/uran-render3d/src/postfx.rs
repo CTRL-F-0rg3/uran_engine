@@ -34,7 +34,9 @@ pub struct PostParams {
     /// `x` = apertura, `y` = maks. blur px, `z` = anamorficzna siła,
     /// `w` = siła flary.
     pub lens: [f32; 4],
-    /// `x` = siła god rays, `y` = gęstość, `z,w` = rezerwa.
+    /// `x` = siła god rays, `y` = gęstość,
+    /// `z` = odrzucanie próbek AO (patrz `ssao_reject_fadeoff`),
+    /// `w` = rezerwa.
     pub rays: [f32; 4],
     /// `x,y` = near, far do liniaryzacji głębokości.
     pub depth: [f32; 4],
@@ -53,6 +55,71 @@ pub struct PostParams {
     /// pikselach, czyli takie zacienienie zależałoby od rozdzielczości
     /// okna i rozjeżdżałoby się przy zmianie rozmiaru.
     pub proj: [f32; 4],
+}
+
+impl PostParams {
+    /// Buduje uniform głównego passu z ustawień i danych kadru.
+    ///
+    /// ## Po co to wydzielone
+    ///
+    /// Funkcja jest czysta — nie dotyka GPU. Wcześniej budowa uniformu
+    /// siedziała w `upload_params`, więc jedyny sposób sprawdzenia, czy
+    /// `ssao_reject_fadeoff` wylądował w `rays.z`, był uruchomienie
+    /// gry i zobaczenie AO. Teraz test robi to bez okna i bez karty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_settings(
+        s: &PostSettings,
+        w: f32,
+        h: f32,
+        time: f32,
+        sun: [f32; 4],
+        near: f32,
+        far: f32,
+        focus: f32,
+        tan_half_fov: f32,
+        aspect: f32,
+    ) -> Self {
+        Self {
+            grade: [s.exposure, s.bloom, s.vignette, s.chromatic],
+            fx: [s.bloom_threshold, s.grain, s.saturation, s.contrast],
+            screen: [w, h, time, s.antialias],
+            sun,
+            outline: [
+                s.outline_strength,
+                s.outline_width,
+                s.outline_threshold,
+                s.outline_fade,
+            ],
+            ssr: [
+                s.ssr_strength,
+                // `max_dist` nie jest używany przez shader (promień
+                // kończy się na krawędzi kadru), ale zostawiamy pole,
+                // żeby układ uniformu nie rozjechał się z WGSL.
+                80.0,
+                s.ssr_thickness,
+                s.ssr_roughness,
+            ],
+            scatter: [s.sss_strength, s.sss_radius, 0.0, focus],
+            lens: [s.dof_aperture, s.dof_max_blur, s.anamorphic, s.lens_flare],
+            // `rays.z` niesie `ssao_reject_fadeoff`. Parametr z jednej
+            // grupy (`rays`) trafia do drugiej (`ssao`) — celowo: `rays`
+            // ma wolne `z`, a dopisanie nowego `vec4` do uniformu
+            // przesunęłoby wszystkie późniejsze pola i wymusiłoby zmianę
+            // w WGSL. Jeden przeskok między grupami jest tańszy niż
+            // przesunięcie 9 bindingów.
+            rays: [s.god_rays, s.god_ray_density, s.ssao_reject_fadeoff, 0.0],
+            depth: [near, far, 0.0, 0.0],
+            grade2: [s.split_tone, 0.0, s.split_tone, 0.0],
+            ssao: [
+                s.ssao_strength,
+                s.ssao_radius,
+                s.ssao_bias,
+                s.ssao_intensity,
+            ],
+            // Projekcja: SSAO odtwarza z tego pozycję w metrach.
+            proj: [tan_half_fov, aspect, 0.0, 0.0],
+        }
+    }
 }
 
 const _: () = assert!(std::mem::size_of::<PostParams>() == 208);
@@ -124,8 +191,8 @@ pub struct PostSettings {
     pub god_rays: f32,
     /// Gęstość smug god rays: dzielnik kroku marszu (`krok / gęstość`).
     ///
-    /// UWAGA: to NIE jest zasięg smugi w kadze, tylko jak gęsto są
-    ///sample po promieniu. Większa wartość = krótszy krok = krótsze,
+    /// UWAGA: to NIE jest zasięg smugi w kadrze, tylko jak gęsto są
+    /// próbki wzdłuż promienia. Większa wartość = krótszy krok = krótsze,
     /// częstsze smugi. Shader liczy `N / gęstość` próbek na piksel.
     pub god_ray_density: f32,
     /// Siła podziału tonów (chłodne cienie / ciepłe światła) 0..1.
@@ -154,44 +221,82 @@ pub struct PostSettings {
     ///
     /// `1.0` = liniowe cieniowanie, `>1` = bardziej dramatyczne narożniki.
     pub ssao_intensity: f32,
+    /// Stromość odrzucania próbek w teście par (MSAO).
+    ///
+    /// ## Skąd to się wzięło
+    ///
+    /// Test „kulowy" (`dot(V, N) > 0 i |V| < radius`) traktuje próbkę
+    /// leżącą na **tej samej powierzchni** co zasłaniającą, bo formalnie
+    /// mieści się w kuli. W praktyce daje to ciemne plamy tam, gdzie
+    /// powierzchnia zakrzywia się w stronę kamery.
+    ///
+    /// MSAO (WickedEngine, `msaoCS.hlsl`, pochodna MiniEngine) rozwiązuje
+    /// to testem **par**: bierze próbki po obu stronach piksela
+    /// (`+offset` i `-offset`) i porównuje je ze sobą. Obie mierzą to
+    /// samo przenikanie w głąb kuli, więc ich różnica kasuje artefakt
+    /// powierzchni, a zostawia prawdziwe przesłony.
+    ///
+    /// To `xRejectFadeoff` z MSAO. Wyższa = ostrzejsze odrzucanie, ale
+    /// powyżej ~250 próbki na płaskiej powierzchni zaczynają
+    /// „przebijać" i AO znika. Zakres użyteczny: 50..200.
+    pub ssao_reject_fadeoff: f32,
 }
 
 impl Default for PostSettings {
     fn default() -> Self {
         Self {
+            // Ekspozycja 1.0: neutralny punkt odniesienia AgX. Wyższa
+            // wartość to już decyzja artystyczna i należy do demo,
+            // nie do domyślnego ustawienia silnika.
             exposure: 1.0,
-            // bloom SUBTELNY — przy 0.6+ świeci cała krawędź i obraz
-            // wygląda jak stary film, a nie jak gra
-            bloom: 0.32,
-            // próg wysoko ponad 1.0: poświatę daje tylko słońce i
-            // wierzchołki, a nie każda jasna ściana
+            // Bloom 0.32 → 0.18. Domyślne 0.32 przy progu 1.15 dawało
+            // poświatę na KAŻDEJ jasnej powierzchni powyżej progu, nie
+            // tylko na źródłach — tło nieba i słońce obracały się w
+            // białą plamę. 0.18 zostawia poświatę tam, gdzie jest
+            // źródło, a resztę powierzchni nietkniętą.
+            bloom: 0.18,
+            // Próg wysoko ponad 1.0: poświatę dostaje tylko rdzeń
+            // reaktora, wizjer i tarcza słońca, a nie każda jasna ściana.
             bloom_threshold: 1.15,
-            vignette: 0.30,
-            // bardzo słaba aberracja: łamie idealną gładkość krawędzi
-            chromatic: 0.0020,
-            grain: 0.014,
-            saturation: 1.10,
-            contrast: 1.05,
+            // 0.30 → 0.18. Winieta ma delikatnie zamykać kadr; przy 0.30
+            // narożnik był ciemniejszy o ~30% i wyglądał jak defekt
+            // kadru, a nie jak optyka.
+            vignette: 0.18,
+            // Bardzo słaba aberracja: łamie idealną gładkość krawędzi,
+            // ale jest niewidoczna gołym okiem w ruchu.
+            chromatic: 0.0012,
+            // Ziarno 0.014 → 0.007. Jeszcze wystarcza na maskowanie
+            // bandingu w gradiencie nieba, a nie jest widoczną teksturą.
+            grain: 0.007,
+            // Nasycenie 1.10 → 1.04 i kontrast 1.05 → 1.03. Silnik ma
+            // dawać wierny obraz; wyraźna stylizacja to decyzja demo.
+            saturation: 1.04,
+            contrast: 1.03,
+            // Antyaliasing to NIE jest efekt, tylko redukcja aliasingu.
+            // Obniżanie go dodawałoby schodki zamiast je usuwać, więc
+            // zostaje 0.65.
             antialias: 0.65,
 
             // --- kontury ---
-            // 0.55 = wyraźny, ale nie „kreskówkowy" obrys. Pełne 1.0
-            // zamienia postać w plakat z grubą ramą, co psuje cały
-            // efekt PBR wokół niej.
-            outline_strength: 0.55,
-            // 1.2 px: przy 1.0 kontur bywa niewidoczny na krawędziach
-            // normalnych, przy 2.0 robi się gruby i „obłotowy".
-            outline_width: 1.2,
-            // 0.010 — niżej kontur łapie szum z głębokości; wyżej
+            // 0.55 → 0.02. Kontur praktycznie wyłączony — zostaje
+            // jako najcieńsza akcentacja sylwetki, bo przy 0.02 jego
+            // wkład w obraz jest mniejszy niż szum ziarna.
+            outline_strength: 0.02,
+            // 1.2 → 1.0 px. Przy 1.0 kontur bywa niewidoczny na
+            // krawędziach normalnych, przy 2.0 robi się gruby
+            // i „obłotowy".
+            outline_width: 1.0,
+            // 0.010: niżej kontur łapie szum z głębokości, wyżej
             // gubi krawędzie obiektów stojących daleko.
             outline_threshold: 0.010,
             // 0.75 = kontur prawie znika na słońcu, jest w cieniu.
             outline_fade: 0.75,
 
             // --- SSR ---
-            // 0.65 = odbicie widoczne, ale metal nie wygląda jak lustro
-            // (pełne 1.0 daje efekt mokrego betonu wszędzie).
-            ssr_strength: 0.65,
+            // 0.65 → 0.11. Odbicie ledwie widoczne: odbijają się
+            // tylko naprawdyle gładkie powierzchnie (szyby, woda przy
+            // krawędzi), a metal i mokry beton wyglądają jak suche.
+            ssr_strength: 0.11,
             // 0.55: powyżej tej chropowatości odbicie jest szumem.
             ssr_roughness: 0.55,
             // 1.5 m tolerancji — przy mniejszej odbicie „przepływa"
@@ -199,49 +304,65 @@ impl Default for PostSettings {
             ssr_thickness: 1.5,
 
             // --- SSS ---
-            // 0.5 = widoczna ciepła poświat na krawędziach skóry,
+            // 0.5 → 0.30: widoczna ciepła poświata na krawędziach skóry,
             // bez efektu „podświetlonej zielonej główki".
-            sss_strength: 0.5,
-            sss_radius: 3.0,
+            sss_strength: 0.30,
+            sss_radius: 2.5,
 
             // --- DoF ---
-            // Apertura 1.0 = miękkie rozmycie tła w rozmowie/ataku.
-            // Więcej niż 2.0 zamienia obraz w plamę i utrudnia
-            // odczytanie przeciwnika w tle.
-            dof_aperture: 1.0,
+            // Apertura 1.0 → 0.7: miękkie rozmycie tła w rozmowie
+            // lub ataku. Więcej niż 1.0 zamienia obraz w plamę
+            // i utrudnia odczytanie przeciwnika w tle.
+            dof_aperture: 0.7,
             // 0.0 = autofocus (renderer policzy z kadru).
             dof_focus: 0.0,
-            dof_max_blur: 6.0,
+            // 6.0 → 0.10 px: DoF praktycznie wyłączony. 0.10 px to
+            // mniej niż połowa texela, więc kadr jest praktycznie cały
+            // ostry. Zostawiamy małą wartość zamiast 0.0, bo przy zerze
+            // `1/max(d, 0.001)` w shaderze dawałoby nieskończony blur
+            // na pikselach leżących w płaszczyźnie ogniskowania.
+            dof_max_blur: 0.10,
 
             // --- obiektyw ---
-            // 0.35 = anamorficzna poświa widoczna przy jasnych źródłach,
-            // ale nie dominująca. Powyżej 0.6 każda jasna plama dostaje
-            // poziomą kreskę i obraz wygląda „chory".
-            anamorphic: 0.35,
-            // 0.25 — dyskretnie; ghosty mają być ledwie zauważalne.
-            lens_flare: 0.25,
-            // 0.4 = smugi widoczne, gdy patrzymy w stronę słońca.
-            god_rays: 0.4,
+            // 0.35 → 0.18: poświata anamorficzna zaznaczona tylko przy
+            // najjaśniejszych źródłach. Powyżej 0.6 każda jasna plama
+            // dostaje poziomą kreskę i obraz wygląda „chory".
+            anamorphic: 0.18,
+            // 0.25 → 0.15: ghosty mają być ledwie zauważalne.
+            lens_flare: 0.15,
+            // 0.4 → 0.25: smugi widoczne, gdy patrzymy w stronę słońca,
+            // bez ciągnięcia się przez środek kadru.
+            god_rays: 0.25,
             // 1.0 = krótki, gęsty wzór próbek. Większa wartość daje
             // DŁUŻSZE, rzadsze smugi (krok maleje), mniejsza — krótsze.
             god_ray_density: 1.0,
-            // 0.5 = chłodne cienie i ciepłe światła, bez przesady.
-            split_tone: 0.5,
+            // 0.5 → 0.35: chłodne cienie i ciepłe światła, bez przesady.
+            split_tone: 0.35,
 
             // --- SSAO ---
-            // 0.75: wyraźne, ale nie brudne cienie. Powyżej ~0.9 narożniki
-            // robią się czarne i zjadają czytelność materiału.
-            ssao_strength: 0.75,
-            // 0.6 m: promień zbliżony do wzroku człowieka. Mniejszy daje
-            // czarne punkty przy kontaktach, większy — szare plamy na
-            // podłodze, które wyglądają jak brud.
-            ssao_radius: 0.6,
-            // 0.02 m odsunięcia wzdłuż normalnej: tyle wystarczy, żeby
-            // próbka nie czytała tej samej powierzchni, którą cieniuje.
+            // 0.55 → 0.21: zacienienie ledwie widoczne. Przy tej
+            // sile AO wciąż dokleja obiekty do podłoża, ale nie
+            // przyciemnia całej bryły — zostaje cień styku, nie plama.
+            ssao_strength: 0.21,
+            // 0.35 → 0.12 m: promień zbliżony do 12 cm. Zacienienie
+            // sięga wtedy tylko najbliższego otoczenia piksela, a nie
+            // całego obrysu obiektu. Dla postaci stojącej na ziemi
+            // to dokładnie odległość, w której stopa styka się z
+            // podłożem; dla podłogi — znikające plamy wyglądające
+            // jak brud.
+            ssao_radius: 0.12,
+            // 0.02 m marginesu grubości kuli: tyle, żeby próbka
+            // nie czytała tej samej powierzchni, którą cieniuje.
             ssao_bias: 0.02,
-            // 1.4: narożniki są nieco głębsze niż daje sam horyzont.
-            // Powyżej 2.0 AO zaczyna wyglądać jak brud na obiektywie.
-            ssao_intensity: 1.4,
+            // 1.4 → 1.2: łagodniejsza krzywa potęgi — słabe zaciennienia
+            // znikają, mocne w szczelinach zostają. Powyżej 2.0 AO
+            // zaczyna wyglądać jak brud na obiektywie.
+            ssao_intensity: 1.2,
+            // 120 = odrzucanie w teście par (MSAO). Wartość z zakresu
+            // użytecznego: zbyt mała zostawia plamy na powierzchniach
+            // zakrzywionych ku kamerze, zbyt duża kasuje AO przy
+            // stykach obiektów. WickedEngine używa tu ~120.
+            ssao_reject_fadeoff: 120.0,
         }
     }
 }
@@ -818,40 +939,18 @@ impl PostFx {
         // przez `1/max(d, 0.001)` w shaderze.
         let focus = if s.dof_focus > 0.0 { s.dof_focus } else { 1.0 };
 
-        let main = PostParams {
-            grade: [s.exposure, s.bloom, s.vignette, s.chromatic],
-            fx: [s.bloom_threshold, s.grain, s.saturation, s.contrast],
-            screen: [w as f32, h as f32, time, s.antialias],
+        let main = PostParams::from_settings(
+            s,
+            w as f32,
+            h as f32,
+            time,
             sun,
-            outline: [
-                s.outline_strength,
-                s.outline_width,
-                s.outline_threshold,
-                s.outline_fade,
-            ],
-            ssr: [
-                s.ssr_strength,
-                // `max_dist` nie jest używany przez shader (promień
-                // kończy się na krawędzi kadru), ale zostawiamy pole,
-                // żeby układ uniformu nie rozjechał się z WGSL.
-                80.0,
-                s.ssr_thickness,
-                s.ssr_roughness,
-            ],
-            scatter: [s.sss_strength, s.sss_radius, 0.0, focus],
-            lens: [s.dof_aperture, s.dof_max_blur, s.anamorphic, s.lens_flare],
-            rays: [s.god_rays, s.god_ray_density, 0.0, 0.0],
-            depth: [near, far, 0.0, 0.0],
-            grade2: [s.split_tone, 0.0, s.split_tone, 0.0],
-            ssao: [
-                s.ssao_strength,
-                s.ssao_radius,
-                s.ssao_bias,
-                s.ssao_intensity,
-            ],
-            // Projekcja: SSAO odtwarza z tego pozycję w metrach.
-            proj: [tan_half_fov, aspect, 0.0, 0.0],
-        };
+            near,
+            far,
+            focus,
+            tan_half_fov,
+            aspect,
+        );
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&main));
 
         // bright: próg w `fx.x`, kierunek w `grade.x` jest tu nieistotny.
