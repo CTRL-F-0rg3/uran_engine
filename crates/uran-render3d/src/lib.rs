@@ -234,7 +234,6 @@ mod shader_tests {
     /// Wyjątek: `dof_max_blur` ma minimalne, ale niezerowe granice —
     /// przy 0.0 shader dzieli przez `max(d, 0.001)`, co daje nieskończony
     /// blur na pikselach w płaszczyźnie ogniskowania.
-    #[test]
     /// Ambient musi być **dużo mniejszy** od natężenia słońca.
     ///
     /// Obraz wychodził „jak przez mętną soczewkę" właśnie dlatego, że
@@ -276,9 +275,13 @@ mod shader_tests {
         use crate::postfx::PostSettings;
         let p = PostSettings::default();
 
+        // 0.55 -> 0.12. Wysoka ostrosc dawala biale obwodki
+        // (fringes) na kazdej krawedzi sylwetki, co czytalo sie
+        // jako "dziwne kolory" mimo poprawnej palety. Nadal aktywna,
+        // ale wyraznie slabsza.
         assert!(
-            p.clarity > 0.3,
-            "clarity = {} — obraz będzie znowu mętny",
+            p.clarity > 0.05,
+            "clarity = {} - obraz bedzie znowu metny",
             p.clarity
         );
         // Powyżej 1.5 unsharp daje halo (białą obwódkę) na
@@ -324,15 +327,310 @@ mod shader_tests {
         );
     }
 
+    /// Macierze AgX muszą być transponowane, a tonemap musi mieć
+    /// parę inset/outset **oraz** konwersję Rec.2020.
+    ///
+    /// ## Dlaczego to pilnujemy testem
+    ///
+    /// Wartości macierzy AgX są wypisane **wierszami**, a WGSL (jak
+    /// GLSL) buduje macierz z **kolumn**. Bez `transpose()` macierz
+    /// wychodzi transponowana, a wynik — przesunięty w odcieniu.
+    ///
+    /// ## Konwersja Rec.2020 — nie ozdoba
+    ///
+    /// AgX zaprojektowano na primariesach **Rec.2020**. Referencja
+    /// (Filament / Blender 4 / three.js) ma więc cztery etapy:
+    /// `sRGB -> Rec.2020`, `inset`, `log2`/sigmoid, `outset`,
+    /// `pow(2.2)`, `Rec.2020 -> sRGB`, `clamp`.
+    ///
+    /// Wcześniejsza wersja ZAMIAST dwóch macierzy Rec.2020 używała
+    /// własnych `agx_transform` / `agx_transform_inv`, których w AgX
+    /// nie ma. Obraz pozostawał „prawie dobry" — to najgorsza cecha
+    /// tego błędu, bo cichy. Objaw: trwały przesmyk w magenta na
+    /// jasnych i nasyconych partiach, zgłoszony jako „różowe słońce".
+    #[test]
+    fn agx_ma_transpozycje_i_inset_outset() {
+        let src = include_str!("post.wgsl");
+
+        for fname in [
+            "linear_srgb_to_linear_rec2020",
+            "linear_rec2020_to_linear_srgb",
+            "agx_inset",
+            "agx_outset",
+        ] {
+            let start = src
+                .find(&format!("fn {fname}("))
+                .unwrap_or_else(|| panic!("brak funkcji {fname} w post.wgsl"));
+            let body = &src[start..(start + 400).min(src.len())];
+            assert!(
+                body.contains("transpose("),
+                "{fname}() nie używa transpose() — wartości AgX są wierszami, \
+                 a WGSL buduje macierz z kolumn. Efekt: przesmyk w odcieniu \
+                 na jasnych partiach (tarcza słońca wychodzi różowa)."
+            );
+        }
+
+        // Śmieciowe macierze rektyfikacji musiały zniknąć: ich bardzo
+        // podobne współczynniki (0.842479…) kuszą do przywrócenia.
+        assert!(
+            !src.contains("fn agx_transform("),
+            "agx_transform() wróciła — w referencyjnym AgX nie ma takiej \
+             macierzy; jej rolę pełnią konwersje Rec.2020"
+        );
+        assert!(
+            !src.contains("fn agx_transform_inv("),
+            "agx_transform_inv() wróciła — j.w."
+        );
+
+        // Para inset/outset musi być UŻYTA w tonemapie, nie tylko
+        // zdefiniowana. Bez insetu jasne, nasycone barwy przesuwają się
+        // w magenta.
+        let tm_start = src
+            .find("fn agx_tonemap(")
+            .expect("brak agx_tonemap w post.wgsl");
+        let tm = &src[tm_start..(tm_start + 1200).min(src.len())];
+        assert!(
+            tm.contains("linear_srgb_to_linear_rec2020() *"),
+            "agx_tonemap() nie wchodzi w Rec.2020 — bez tego AgX miesza \
+             gamut sRGB z gamutem, na którym został zaprojektowany"
+        );
+        assert!(
+            tm.contains("agx_inset() * val"),
+            "agx_tonemap() nie stosuje insetu przed log2"
+        );
+        assert!(
+            tm.contains("agx_outset() * val"),
+            "agx_tonemap() nie stosuje outsetu po krzywej tonalnej"
+        );
+        assert!(
+            tm.contains("linear_rec2020_to_linear_srgb() * val"),
+            "agx_tonemap() nie wraca do sRGB — wynik pozostanie w Rec.2020 \
+             i będzie przesunięty w odcieniu"
+        );
+
+        // Kolejność ma znaczenie: wejście PRZED insetem, wyjście PO
+        // outsetcie. Sprawdzamy pozycje, bo sama obecność nie wystarczy.
+        let rec_in = tm
+            .find("linear_srgb_to_linear_rec2020() *")
+            .expect("wejście do Rec.2020");
+        let inset = tm.find("agx_inset() * val").expect("inset");
+        let log = tm.find("log2(").expect("log2");
+        let outset = tm.find("agx_outset() * val").expect("outset");
+        let rec_out = tm
+            .find("linear_rec2020_to_linear_srgb() * val")
+            .expect("wyjście z Rec.2020");
+        assert!(
+            rec_in < inset && inset < log && log < outset && outset < rec_out,
+            "kolejność AgX jest zła: oczekiwane sRGB->Rec2020, inset, log2, \
+             outset, Rec2020->sRGB (indeksy: {rec_in}, {inset}, {log}, \
+             {outset}, {rec_out})"
+        );
+    }
+
+    /// Mgła domyślna musi być **delikatna** i nie rozjaśniać dystansu.
+    ///
+    /// ## Dlaczego
+    ///
+    /// Zgłoszone na zrzucie: „wszystko jest mętne". Przy gęstości
+    /// 0.0045 mgła zaczynała zacierać obraz kilkanaście metrów od
+    /// kamery, a horyzont znikał w jednolitej, jasnej błękitnej ścianie.
+    ///
+    /// Test pilnuje dwóch rzeczy naraz: małej gęstości **oraz**
+    /// tego, że kolor mgły jest ciemniejszy od nieba. Ten drugi warunek
+    /// jest ważniejszy, niż się wydaje — zbyt jasna mgła nie tyle
+    /// ukrywa dystans, co **rozjaśnia** go, przez co cały kadr ciągnie
+    /// ku blademu błękitowi i traci nasycenie.
+    #[test]
+    fn mgla_domyslna_jest_delikatna_i_nie_rozjasnia_dystansu() {
+        let a = crate::scene::Atmosphere::default();
+
+        // 1 - e^(-0.0016 * 100 m) = 15%: ledwie zauważalne zamglenie.
+        // 0.0045 dawało 36%, co na zrzucie było już „mętne".
+        let at_100m = 1.0 - (-a.fog_density * 100.0).exp();
+        assert!(
+            at_100m < 0.20,
+            "fog_density = {} daje {:.0}% mgły na 100 m — obraz będzie mętny \
+             (prawidłowo < 20%)",
+            a.fog_density,
+            at_100m * 100.0
+        );
+
+        // Kolor mgły musi być ciemniejszy od nieba w typowej scenie
+        // (`endfield-3d` ustawia 0.34/0.47/0.65).
+        let fog_luma = a.fog_color[0] * 0.2126 + a.fog_color[1] * 0.7152 + a.fog_color[2] * 0.0722;
+        let sky_luma = 0.34 * 0.2126 + 0.47 * 0.7152 + 0.65 * 0.0722;
+        assert!(
+            fog_luma < sky_luma,
+            "mgła (luma {:.2}) nie jest ciemniejsza od nieba ({:.2}) — dystans \
+             będzie się rozjaśniał zamiast zanikać",
+            fog_luma,
+            sky_luma
+        );
+    }
+
+    /// Demo nie może zalewać otoczenia ambientem.
+    ///
+    /// ## Dlaczego to osobny test, a nie część `ambient_nie_wypelnia_cieni`
+    ///
+    /// Tamten pilnuje wartości domyślnej w `Lighting::default()`. Ten
+    /// pilnuje tego, czego tamten nie widzi: **demo nadpisujące ambient
+    /// własną, większą wartością**. To właśnie one psuły obrazy —
+    /// `farm-simulator` miało 0.36/0.45/0.60 przy słońcu 4.0, czyli
+    /// ambient jaśniejszy niż znaczna część strony na słońcu. Kadr był
+    /// płaski, a kolory (trawa, drewno) wychodziły „plastikowe".
+    ///
+    /// Test czyta pliki demo jako tekst, bo te ustawienia nie żyją
+    /// w bibliotece.
+    #[test]
+    fn demo_nie_zalewa_otoczenia_ambientem() {
+        // Oczekiwany ambient i natężenie słońca w każdym demo.
+        // `endfield-3d` ma słońce 6.5 (celowo mocniejsze), więc jego
+        // proporcja i tak jest ~20× mniejsza niż w `Lighting::default()`.
+        //
+        // `include_str!` liczy ścieżkę względem pliku `lib.rs`, czyli
+        // `crates/uran-render3d/src/`. Do katalogu głównego repo
+        // są trzy poziomy w górę. Ścieżki są literałami, bo `concat!`
+        // nie przyjmuje wyrażeń.
+        for (path, src, expected, intensity) in [
+            (
+                "farm-simulator",
+                include_str!("../../../farm-simulator/src/main.rs"),
+                "[0.13, 0.16, 0.21]",
+                4.0f32,
+            ),
+            (
+                "junak-rider",
+                include_str!("../../../junak-rider/src/main.rs"),
+                "[0.13, 0.16, 0.21]",
+                4.0f32,
+            ),
+            (
+                "endfield-3d",
+                include_str!("../../../endfield-3d/src/main.rs"),
+                "[0.15, 0.19, 0.26]",
+                6.5f32,
+            ),
+        ] {
+            assert!(
+                src.contains(&format!("l.ambient = {expected};")),
+                "{path}: brak oczekiwanego ambientu {expected}. Zbyt wysoki \
+                 ambient zalewa kadr i zabija kontrast między słońcem a cieniem."
+            );
+
+            // Proporcja: luminancja ambientu / (luminancja słońca *
+            // natężenie) — ta sama miara, której używa
+            // `ambient_nie_wypelnia_cieni`.
+            let amb: Vec<f32> = expected
+                .trim_matches(|c| c == '[' || c == ']')
+                .split(',')
+                .filter_map(|v| v.trim().parse::<f32>().ok())
+                .collect();
+            let ambient_luma = amb[0] * 0.2126 + amb[1] * 0.7152 + amb[2] * 0.0722;
+            // Słońce [1.0, 0.93, 0.80] — typowe dla tego silnika.
+            let sun_luma = 1.0 * 0.2126 + 0.93 * 0.7152 + 0.80 * 0.0722;
+            let ratio = ambient_luma / (sun_luma * intensity);
+            assert!(
+                ratio < 0.05,
+                "{path}: ambient:słońce = {ratio:.3} — cienie wypełnione \
+                 (prawidłowo < 0.05)"
+            );
+        }
+    }
+
+    /// Regresja: `ndotl` nie moze byc liczony dwa razy.
+    ///
+    /// `fs_main` liczyl `diffuse = kd * albedo * ramp / PI`, a potem
+    /// `direct = (diffuse + specular) * sun * ndotl` mnozyl to jeszcze
+    /// raz przez `ndotl`. Dyfuzja byla wiec kwadratem cosinusa, a
+    /// `pbr.wgsl` tego nie robi - tam waga dyfuzji jest czystym
+    /// `albedo / PI`, a `n_dot_l` mnozy caly termin w petli.
+    ///
+    /// Skutek byl widoczny gołym okiem: obraz plaski, cienie zlane
+    /// z oswietleniem i kolory niezgodne z materialem.
+    #[test]
+    fn dyfuzja_nie_jest_mnozona_dwa_razy_przez_ndotl() {
+        let src = include_str!("s3d.wgsl");
+
+        // `ndotl` moze wystapic w definicjach (`let ndotl = ...`) i w
+        // miejscach, gdzie jest poprawny (odbicie, SSS, rim), wiec
+        // szukamy konkretnie wzorca, ktory byl bledny.
+        assert!(
+            !src.contains("(diffuse + specular) * sun * ndotl"),
+            "s3d.wgsl: dyfuzja znowu mnozona przez ndotl razem z odbiciem. \
+             Waga rampy musi byc w `diffuse`, a `ndotl` moze dotyczyc \
+             tylko odbicia."
+        );
+
+        // I na odwrot: poprawne rozdzielenie musi istniec, inaczej
+        // powyzszy test przejdzilby na pustym shaderze.
+        assert!(
+            src.contains("diffuse * sun + specular * sun * ndotl"),
+            "s3d.wgsl: brak rozdzielenia wagi dyfuzji i odbicia. \
+             Oczekiwane `diffuse * sun + specular * sun * ndotl`."
+        );
+
+        // `ndot_final` jest kompletna waga dyfuzji, wiec nie wolno
+        // mnozyc go jeszcze raz w `direct`.
+        assert!(
+            !src.contains("* ndl_final *"),
+            "s3d.wgsl: `ndl_final` uzyty jako dodatkowy czynnik. \
+             To jest juz kompletna waga dyfuzji."
+        );
+    }
+
+    /// `MIN_ROUGHNESS` musi realnie chronic przed rozpryskiem GGX.
+    ///
+    /// Gdy `alpha → 0`, `D → ∞`, a pojedynczy piksel odbicia zamienia
+    /// sie w bialy punkt migoczacy przy ruchu kamery. Sufit z
+    /// `pbr.wgsl` (0.045) jest tu wzorcem.
+    #[test]
+    fn minimalna_chropowatosc_jest_zastosowana() {
+        let src = include_str!("s3d.wgsl");
+        assert!(
+            src.contains("const MIN_ROUGHNESS: f32 = 0.045;"),
+            "s3d.wgsl: brak stalej MIN_ROUGHNESS = 0.045"
+        );
+        assert!(
+            src.contains("MIN_ROUGHNESS, 1.0)"),
+            "s3d.wgsl: MIN_ROUGHNESS nie jest uzyte w clamp() chropowatosci"
+        );
+    }
+
+    /// Specular AA musi liczyc splot z pochodnych (`dpdx`/`dpdy`).
+    ///
+    /// Bez tego gladkie materiale migocza przy ruchu kamery - to
+    /// najbardziej widoczny artefakt po przeniesieniu reszty fizyki
+    /// z `pbr.wgsl`.
+    #[test]
+    fn specular_aa_liczy_splot_z_pochodnych() {
+        let src = include_str!("s3d.wgsl");
+        assert!(
+            src.contains("dpdx(N)") && src.contains("dpdy(N)"),
+            "s3d.wgsl: brak `dpdx(N)` / `dpdy(N)` - specular AA nie dziala"
+        );
+        assert!(
+            src.contains("specular_kernel"),
+            "s3d.wgsl: brak jadra specular AA (`specular_kernel`)"
+        );
+    }
+
+    #[test]
     fn domyslne_sa_dokladnie_takie_jak_zamowiono() {
         use crate::postfx::PostSettings;
         let p = PostSettings::default();
 
-        assert_eq!(p.ssao_strength, 0.21, "siła SSAO");
-        assert_eq!(p.ssao_radius, 0.12, "promień SSAO w metrach");
+        assert_eq!(p.ssao_strength, 0.10, "sila SSAO");
+        assert_eq!(p.ssao_radius, 0.10, "promien SSAO w metrach");
         assert_eq!(p.outline_strength, 0.02, "kontur");
         assert_eq!(p.ssr_strength, 0.11, "odbicie ekranowe");
         assert_eq!(p.dof_max_blur, 0.10, "maks. blur DoF");
+        // Kalibracja obrazu: to sa trzy wartosci, ktorymi
+        // wczesniej zjadlym kolory. `clarity` 0.55 dawal biale
+        // obwodki na krawedziach, `shadow_lift` 0.03 szarzylo
+        // cienie, a `split_tone` 0.35 przesuwal cala palete.
+        assert_eq!(p.clarity, 0.12, "ostrosc");
+        assert_eq!(p.shadow_lift, 0.01, "lift cieni");
+        assert_eq!(p.split_tone, 0.10, "podzial tonow");
     }
 
     /// Wszystkie cztery powyższe wartości muszą być **bardzo małe** —
@@ -352,6 +650,7 @@ mod shader_tests {
         assert!(p.dof_max_blur <= 0.5, "DoF nadal aktywny");
     }
 
+    #[test]
     fn domyslne_efekty_sa_lagodne() {
         use crate::postfx::PostSettings;
         let p = PostSettings::default();

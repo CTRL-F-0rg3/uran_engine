@@ -185,13 +185,27 @@ impl Default for Atmosphere {
     fn default() -> Self {
         Self {
             sky: true,
-            // 0.0045 = mgła ledwo widoczna na dystansie kilkudziesięciu
-            // metrów. Wyższa wartość zjadała czytelność sylwetek
-            // przeciwników, co w grze akcji jest niepożądane.
-            fog_density: 0.0045,
-            // Lekko chłodna, pasująca do niebieskiego ambientu. Ciepła mgła
-            // przy zimnym otoczeniu wygląda jak brud na obiektywie.
-            fog_color: [0.58, 0.70, 0.86],
+            // 0.0045 → 0.0016. Wcześniejsza wartość zamieniała w „mętne"
+            // zrzuty: mgła zaczynała jeść już kilkanaście metrów od
+            // kamery, a horyzont znikał w błękitnej ścianie.
+            // 0.0016 daje ledwie widoczne zamglenie na dystansie
+            // ok. 200 m.
+            //
+            // Skala jest mocno nieliniowa w odczuciu, bo to wykładnicza
+            // funkcja dystansu: przy 100 m to `1 - e^(-0.16)` = 15%
+            // zamiast dawnych 36%. Ta różnica 15% vs 36% to dokładnie
+            // granica między „mglisto" a „czytelnie".
+            fog_density: 0.0016,
+            // 0.58/0.70/0.86 -> 0.46/0.55/0.68 -> 0.32/0.38/0.46.
+            //
+            // Kolor mgly musi byc CIEMNIEJSZY od nieba przy
+            // horyzoncie. Inaczej dystans nie zanika, tylko
+            // jasnieje - i caly kadr ciagnie ku blademu błękitowi,
+            // ktory zjada nasycenie calej reszty kadru.
+            //
+            // 0.32/0.38/0.46 to luma ~0.37 wobec nieba 0.46. Mgla
+            // jest tlem dla obiektow, a nie osobna warstwa koloru.
+            fog_color: [0.32, 0.38, 0.46],
             // 55 m: powyżej wierzchu typowych budynków mgła już dawno
             // zniknęła, więc dachy i kominy zostają czyste, a dolne
             // piętra i ulica toną. 0 dałoby z powrotem jednolitą

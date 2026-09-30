@@ -325,11 +325,11 @@ impl Default for PostSettings {
             // przywraca intensywność materiałów tam, gdzie AgX
             // ją zjadł, ale **po** tonemapie — więc biele i światła
             // pozostają nietknięte, a kolory odzyskują nasycenie.
-            saturation: 1.12,
-            // 1.03 → 1.12: rozciąga zakres tonalny wokół 0.5.
-            // Razem z liftem cieni daje pełną głębię: czarne w
-            // cieniach, białe w światłach, więcej materiału w środku.
-            contrast: 1.12,
+            saturation: 1.10,
+            // 1.12 -> 1.10. Rozciaga zakres tonalny wokół 0.5.
+            // Razem z liftem cieni daje głębię: czarne w
+            // cieniach, biale w swiatlach, wiecej materialu w srodku.
+            contrast: 1.10,
             // Antyaliasing to NIE jest efekt, tylko redukcja aliasingu.
             // Obniżanie go dodawałoby schodki zamiast je usuwać, więc
             // zostaje 0.65.
@@ -394,21 +394,21 @@ impl Default for PostSettings {
             // 1.0 = krótki, gęsty wzór próbek. Większa wartość daje
             // DŁUŻSZE, rzadsze smugi (krok maleje), mniejsza — krótsze.
             god_ray_density: 1.0,
-            // 0.5 → 0.35: chłodne cienie i ciepłe światła, bez przesady.
-            split_tone: 0.35,
+            // Split tone przesuwa cala palete w jeden odcien, wiec
+            // powyzej ~0.15 kazdy kolor w kadrze dostawal ten sam
+            // posmak - i to wlasnie czytalo sie jako "dziwne kolory",
+            // mimo ze paleta materialow byla poprawna.
+            split_tone: 0.10,
 
             // --- SSAO ---
-            // 0.55 → 0.21: zacienienie ledwie widoczne. Przy tej
-            // sile AO wciąż dokleja obiekty do podłoża, ale nie
-            // przyciemnia całej bryły — zostaje cień styku, nie plama.
-            ssao_strength: 0.21,
-            // 0.35 → 0.12 m: promień zbliżony do 12 cm. Zacienienie
-            // sięga wtedy tylko najbliższego otoczenia piksela, a nie
-            // całego obrysu obiektu. Dla postaci stojącej na ziemi
-            // to dokładnie odległość, w której stopa styka się z
-            // podłożem; dla podłogi — znikające plamy wyglądające
-            // jak brud.
-            ssao_radius: 0.12,
+            // 0.21 -> 0.10: zacienienie ledwie widoczne. Przy tej
+            // sile AO wciaz dokleja obiekty do podloza, ale nie
+            // przyciemnia calej bryly - zostaje cien styku, nie plama.
+            ssao_strength: 0.10,
+            // 0.35 -> 0.10 m: promien zblizony do 10 cm. Zaciennienie
+            // siega wtedy tylko najblizszego otoczenia piksela, a nie
+            // calego obrysu obiektu.
+            ssao_radius: 0.10,
             // 0.02 m marginesu grubości kuli: tyle, żeby próbka
             // nie czytała tej samej powierzchni, którą cieniuje.
             ssao_bias: 0.02,
@@ -423,19 +423,21 @@ impl Default for PostSettings {
             ssao_reject_fadeoff: 120.0,
 
             // --- kalibracja obrazu ---
-            // 0.55: wyraźne wyostrzenie, ale bez halo na krawędziach.
-            // Unsharp wzmacnia różnicę sąsiadów, więc zbyt duża
-            // wartość daje białą obwódkę tam, gdzie gradient jest
-            // stromy — czyli dokładnie na sylwetkach, które są
-            // najbardziej widoczne.
-            clarity: 0.55,
-            // 0.03: przywraca czerń w cieniach. Bez tego AO i kontakt
-            // z podłożem giną w szarości, bo tonemap AgX wypłaszcza
-            // najciemniejsze wartości. Powyżej 0.05 cały obraz
-            // szarzeje.
-            shadow_lift: 0.03,
-            // 0.0: bez korekty. Chropowatość 0.6 z materiału jest
-            // rozsądnym punktem wyjścia; ustawienie biasu to
+            // 0.55 -> 0.12. Wyraźne wyostrzenie, ale bez halo na krawedziach.
+            // Unsharp wzmacnia roznice sasiadow, wiec zbyt duza
+            // wartosc daje biala obwodke tam, gdzie gradient jest
+            // stromy - czyli dokladnie na sylwetkach. Przy 0.55
+            // kazda krawedz dostawala bialy fringes, co odczytywane
+            // bylo jako "dziwne kolory" na obrysach.
+            clarity: 0.12,
+            // 0.03 -> 0.01. Przywraca czern w cieniach. Bez tego AO
+            // i kontakt z podlozem gina w szarosci, bo tonemap AgX
+            // wyplaszcza najciemniejsze wartosci. 0.01 to najmniejsza
+            // wartosc, ktora jeszcze robi roznice - powyzej 0.03 caly
+            // obraz szarzeje.
+            shadow_lift: 0.01,
+            // 0.0: bez korekty. Chropowatosc 0.6 z materialu jest
+            // rozsadnym punktem wyjscia; ustawienie biasu to
             // decyzja sceny, nie silnika.
             roughness_bias: 0.0,
         }

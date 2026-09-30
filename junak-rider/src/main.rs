@@ -118,7 +118,15 @@ impl Game {
             let l = scene.lighting_mut();
             l.light_dir = Vec3::new(0.35, 0.42, 0.84);
             l.light_color = [1.0, 0.95, 0.86];
-            l.ambient = [0.34, 0.44, 0.62];
+            // 0.34/0.44/0.62 → 0.13/0.16/0.21 (jak w `farm-simulator`
+            // i w globalnym `Lighting::default()`).
+            //
+            // Stara wartość była 3-4× większa w sensie proporcji do
+            // słońca 4.0, więc zacierała kontrast: strona na słońcu i
+            // cień wyglądały jednak jasno, tyle że w innym odcieniu.
+            // Motocykl wtedy czytał się jak płaska naklejka, mimo że
+            // cień rzutowany był poprawnie.
+            l.ambient = [0.13, 0.16, 0.21];
         }
         {
             let cam = scene.camera_mut();

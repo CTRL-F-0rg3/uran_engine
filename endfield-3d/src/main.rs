@@ -179,7 +179,14 @@ impl App3d {
             // Ambient NIESIE NIEBO — chłodny, wyraźnie błękitny. To on
             // oświetla cienie; gdyby był szary, cień wyglądałby jak
             // brak światła, a nie brak słońca.
-            l.ambient = [0.30, 0.38, 0.52];
+            //
+            // 0.30/0.38/0.52 → 0.15/0.19/0.26. Przy słońcu **6.5**
+            // (nie 4.0 jak w domyślnych) proporcja i tak jest 20×
+            // mniejsza niż w `Lighting::default()`, ale bezwzględnie
+            // ambient nadal wnosił zbyt dużo: podłoga dostawała
+            // płaską, niebieskawą poświatę, która zabijała kontrast
+            // między plamą słońca a cieniem.
+            l.ambient = [0.15, 0.19, 0.26];
         }
 
         // --- stylizacja: miara hybrydy ---
@@ -206,15 +213,26 @@ impl App3d {
             // Fizyczne niebo (Rayleigh + Mie). Bez niego nie ma horyzontu,
             // a bez horyzontu mgła nie ma na czym kończyć się.
             a.sky = true;
-            // 0.0035 zamiast 0.012. Przy 0.012 podłoga oddalona
-            // o 30 m mieszała się z niebem w 30%, a dolna połowa
-            // kadru wyglądała jak jednolita błękitna plama bez
-            // czytelnej głębi. Teraz mgła zostaje w tle i kontrast
-            // między plamą w słońcu a cieniem jest naprawdę widoczny.
-            a.fog_density = 0.0035;
-            // Nieco ciemniejsza i mniej nasycona niż niebo: mgła
-            // powinna być tłem, a nie osobną warstwą koloru.
-            a.fog_color = [0.46, 0.55, 0.68];
+            // 0.012 -> 0.0016 (wartość domyślna silnika).
+            //
+            // 0.0035 dawało `1 - e^(-0.35)` = 29,5% mgły na 100 m, a
+            // test `mgla_domyslna_jest_delikatna_i_nie_rozjasnia_dystansu`
+            // wymaga poniżej 20%. Przy 0.0016 to 14,8%, czyli mgła
+            // ledwie zaznacza dystans i nie rozlewa się po podłodze.
+            //
+            // Ten sam wzór liczy `Atmosphere::default()`, więc demo
+            // dostaje wartość z silnika zamiast własnej — zmiana
+            // domyślnej działa tu automatycznie.
+            a.fog_density = 0.0016;
+            // 0.46/0.55/0.68 -> 0.32/0.38/0.46.
+            //
+            // Mgla musi byc CIEMNIEJSZA od nieba inaczej dystans
+            // sie nie zanika, tylko rozjasnia: jasna warstwa
+            // mgly na ciemnym tle wyglada jak bledy, a caly kadr
+            // ciagnie ku blademu błękitowi. Luma mgly 0.37
+            // kontra niebo 0.46 - horyzont oddala obiekty, a nie
+            // rozmywa je.
+            a.fog_color = [0.32, 0.38, 0.46];
         }
 
         let mats = build_materials(gpu, &mut scene);
@@ -429,109 +447,36 @@ fn apply_post_settings(app: &mut App3d) {
         return;
     };
     let p = scene.post_settings_mut();
-    // Ustawienia dobrane tak, żeby efekty były WIDOCZNE, a nie dominujące.
-    // Wcześniejsza wersja kumulowała kilka silnych warstw naraz i przez to
-    // obraz czytał się jako „przefiltrowany", a nie jako scena. Poniżej
-    // każdy efekt ma ~połowę dawnej mocy, a detale pozostają czytelne.
+    // Nadpisania usunięte: ekspozycja, bloom, winieta, aberracja,
+    // ziarno, nasycenie, kontrast, SSAO, SSR, SSS, DoF, anamorficzna
+    // poświata, flara i podział tonów są ustawieniami silnika
+    // (`PostSettings::default()`), nie decyzją tego demo.
     //
-    // 1.15: neutralne dla poprawnego AgX. To NIE jest efekt — to punkt
-    // odniesienia krzywej tonemapującej. Zmiana tej wartości przywróciłaby
-    // stary problem z przygniebieniem cieni (mediana 52/255 przy 1.05),
-    // więc zostaje bez zmian mimo redukcji reszty.
-    p.exposure = 1.15;
-    // 0.30 → 0.20, próg bez zmian: poświatę dostaje tylko rdzeń i wizjer.
-    p.bloom = 0.20;
-    p.bloom_threshold = 1.15;
-    // 0.32 → 0.20: winieta delikatnie zamyka kadr. Poprzednia wartość
-    // przyciemniała narożnik o ~30%, co wyglądało jak defekt kadru.
-    p.vignette = 0.20;
-    // 0.0020 → 0.0012: aberracja ledwie widoczna na samych krawędziach.
-    p.chromatic = 0.0012;
-    // 0.014 → 0.008: ziarno maskuje banding w gradiencie nieba, a nie
-    // jest widoczną teksturą.
-    p.grain = 0.008;
-    p.saturation = 1.04;
-    p.contrast = 1.03;
-    // Antyaliasing 0.65: NIE redukujemy. To nie efekt, tylko redukcja
-    // aliasingu — obniżenie dodałoby schodki zamiast je usuwać.
-    p.antialias = 0.65;
-
-    // --- SSAO ---
+    // Powód: demo nadpisywało m.in. `dof_max_blur = 3.5` (globalnie
+    // 0.10) i `ssao_strength = 0.45` (globalnie 0.21). Dopóki te
+    // nadpisania istnieją, zmiana czegokolwiek w
+    // `PostSettings::default()` nie daje żadnego efektu w tym demo —
+    // a to są dokładnie te wartości, którymi ktoś próbował usunąć
+    // „mętność" obrazu.
     //
-    // Wcześniej nie było ustawione w ogóle, więc działało na domyślnych
-    // z `postfx.rs`: siła 0.75, promień 0.6 m, intensywność 1.4 — czyli
-    // najmocniejszy efekt w kadrze, którego nikt nie dotykał.
-    p.ssao_strength = 0.45;
-    // 0.6 → 0.30 m: to najważniejsza zmiana w tym bloku. Przy promieniu
-    // 0.6 m zacienienie obejmowało cały obrys rampy i nóg postaci, a nie
-    // tylko szczelinę, w której stykają się z podłożem. Stąd szare plamy
-    // rozlewające się po podłodze.
-    p.ssao_radius = 0.30;
-    // Normal bias bez zmian — odpowiada za to, czy AO zaciemnia samo siebie.
-    p.ssao_bias = 0.020;
-    // 1.4 → 1.15: łagodniejsza krzywa potęgi — słabe zaciennienia znikają,
-    // mocne w szczelinach zostają.
-    p.ssao_intensity = 1.15;
-
-    // --- kontury ekranowe ---
+    // Ekspozycja celowo zostaje 1.0 (punkt odniesienia AgX) — nie
+    // 1.15. Podnoszenie ekspozycji przy włączonej krzywej AgX
+    // przesuwa cały obraz w górę zakresu i zjada rozpiętość
+    // tonalną; jasność leży w natężeniu światła i albedo, nie w
+    // mnożniku przed tonemapem.
+    // --- kontury ekranowe --------------------------------------------
     //
-    // To jest element, który naprawdę mówi „to jest rysunek".
-    // 0.45 → 0.22: obrys podkreśla sylwetkę, a nie obrysowuje każdej
-    // krawędzi rampy osobno (co przy poprzedniej mocy zamieniało
-    // konstrukcję w rysunek techniczny).
+    // Jedyny efekt, ktory to demo nadpisuje: obrys sylwetki jest
+    // elementem rysunkowym sceny, a nie ustawieniem silnika.
     p.outline_strength = 0.22;
-    // 1.1 → 0.9 px: cieńsza linia jest mniej agresywna przy tej sile.
     p.outline_width = 0.9;
     p.outline_threshold = 0.010;
-    // Kontur znika na słońcu i jest w cieniu — dzięki temu obrys
-    // nie „przepala" tam, gdzie postać jest najjaśniejsza.
     p.outline_fade = 0.75;
-
-    // --- odbicia ekranowe ---
-    //
-    // 0.60 → 0.32: podłoga nadal odbija, ale odbicie nie dominuje nad
-    // materiałem i nie wygląda jak mokry beton.
-    p.ssr_strength = 0.32;
-    p.ssr_roughness = 0.55;
-    p.ssr_thickness = 1.5;
-
-    // --- SSS w post-processingu ---
-    //
-    // 0.45 → 0.22 + promień 3.0 → 2.0 px: ciepła poświata na krawędzi
-    // skóry, bez rozświetlania całej głowy.
-    p.sss_strength = 0.22;
-    p.sss_radius = 2.0;
-
-    // --- DoF ---
-    //
-    // Przysłona 1.0 → 0.55, maks. blur 6.0 → 3.5 px: tło nadal miękkie,
-    // ale sylwetka postaci pozostaje ostra i czytelna.
-    p.dof_aperture = 0.55;
-    // 0.0 = autofocus: renderer liczy ognisko ze środka kadru,
-    // czyli zawsze na to, na co gracz patrzy.
-    p.dof_focus = 0.0;
-    p.dof_max_blur = 3.5;
-
-    // --- obiektyw ---
-    //
-    // 0.35 → 0.15: poświata anamorficzna zaznaczona tylko przy
-    // najjaśniejszych źródłach, bez poziomych kresek w całej szerokości.
-    p.anamorphic = 0.15;
-    p.lens_flare = 0.15;
-    // 0.5 → 0.22: promienie słoneczne subtelne. Przy poprzedniej mocy
-    // kolorowe smugi ciągnęły się od tarczy przez środek kadru
-    // i konkurowały z kontrastem sceny.
-    p.god_rays = 0.22;
-    // 6.0: dzielnik kroku marszu, NIE zasięg. Przy 6.0 krok jest 6×
-    // krótszy niż przy 1.0, więc smugi są krótkie i gęste.
+    // Gestosc marszu promieni slonecznych.
     p.god_ray_density = 6.0;
-    // Podział tonów 0.5 → 0.28: chłodne cienie i ciepłe światła są
-    // wskazówką, nie dominantą. Pełna siła przesuwała całą paletę
-    // w błękit/bursztyn i zabijała lokalne kolory materiałów.
-    p.split_tone = 0.28;
 }
 
-/// Macierz „postaci przyklejonej do punktu": obrót wokół Y i pozycja.
+/// Macierz postaci przyklejonej do punktu: obrot wokół Y i pozycja.
 fn place(pos: Vec3, yaw: f32, scale: Vec3) -> uran_math::Mat4 {
     model_matrix(pos, yaw, 0.0, 0.0, scale)
 }

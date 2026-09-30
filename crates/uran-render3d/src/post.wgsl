@@ -107,11 +107,13 @@ fn vs_fullscreen(@builtin(vertex_index) vi: u32) -> VsOut {
 //     plamę zamiast płynnej desaturacji do bieli.
 //
 // AgX naprawia obie. Przebieg:
-//   1. macierz rektyfikacji — linear RGB na przestrzeń percepcyjną,
-//   2. `log2` i normalizacja do zakresu [0,1] (kontrast z logu),
-//   3. krzywa S (wielomian) — miękkie przejścia tonalne,
-//   4. „look": nasycenie i kontrast,
-//   5. macierz odwrotna + `pow(2.2)` — wrót do wartości LINIOWYCH.
+//   1. `sRGB -> Rec.2020` — AgX liczy na primariesach Rec.2020,
+//   2. `inset` — wsuwa kolory do wnętrza gamutu,
+//   3. `log2` i normalizacja do zakresu [0,1] (kontrast z logu),
+//   4. krzywa S (wielomian) — miękkie przejścia tonalne,
+//   5. „look": nasycenie i kontrast,
+//   6. `outset` + `pow(2.2)` — powrót do wartości LINIOWYCH,
+//   7. `Rec.2020 -> sRGB` + `clamp` — mapowanie gamut.
 //
 // Ten ostatni krok jest ważny dla tego renderera: powierzchnia jest
 // `Rgba8UnormSrgb`, więc sRGB koduje sprzęt. Gdybyśmy zakodowali ją
@@ -121,23 +123,74 @@ fn vs_fullscreen(@builtin(vertex_index) vi: u32) -> VsOut {
 const AGX_MIN_EV: f32 = -12.47393;
 const AGX_MAX_EV: f32 = 4.026069;
 
-/// Macierz rektyfikacji: linear sRGB -> przestrzeń percepcyjna.
-fn agx_transform() -> mat3x3<f32> {
-    // Kolumny, nie wiersze — WGSL buduje macierz z kolumn.
-    return mat3x3<f32>(
-        vec3<f32>(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
-        vec3<f32>(0.0784335999999992, 0.878468636469772, 0.0784336000000000),
-        vec3<f32>(0.0792237451477643, 0.0791661274605434, 0.879142973793104),
-    );
+/// linear sRGB -> Rec.2020 (ITU-R BT.2407).
+///
+/// ## Dlaczego ta macierz w ogóle
+///
+/// AgX zaprojektowano na primariesach **Rec.2020**, a nie sRGB. Gamut
+/// Rec.2020 jest szerszy, więc bez jawnej konwersji na wejściu i
+/// wyjściu tonemap miesza dwie różne przestrzenie kolorów — a wynik
+/// jest przesunięty w odcieniu.
+///
+/// ## Dlaczego `transpose()`
+///
+/// Wartości są wypisane **wierszami** (tak, jak w referencji AgX),
+/// a WGSL — podobnie jak GLSL — buduje macierz z **kolumn**.
+/// `transpose()` przywraca właściwą kolejność.
+///
+/// ## Skąd wziął się poprzedni kod
+///
+/// Wcześniej w tym miejscu stała własna `agx_transform` o współczynnikach
+/// `0.842479…`. **Taka macierz w referencyjnym AgX nie występuje** —
+/// była podstawioną za brakującą konwersję gamut. Błąd był cichy:
+/// obraz wyglądał „prawie dobrze", a objaw widać było dopiero jako
+/// trwały przesmyk w magenta na jasnych i nasyconych barwach.
+fn linear_srgb_to_linear_rec2020() -> mat3x3<f32> {
+    return transpose(mat3x3<f32>(
+        vec3<f32>(0.6274, 0.0691, 0.0164),
+        vec3<f32>(0.3293, 0.9195, 0.0880),
+        vec3<f32>(0.0433, 0.0113, 0.8956),
+    ));
 }
 
-/// Macierz odwrotna rektyfikacji (po krzywej tonalnej).
-fn agx_transform_inv() -> mat3x3<f32> {
-    return mat3x3<f32>(
-        vec3<f32>(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
-        vec3<f32>(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
-        vec3<f32>(-0.0990297440797205, -0.0989611768448433, 1.15107367264116),
-    );
+/// Macierz „inset" AgX — wsuwa kolory przed krzywą tonalną.
+///
+/// ## Po co
+///
+/// Konwersja do Rec.2020 ma elementy ujemne poza przekątną, więc bardzo
+/// nasycone barwy (czyste niebo, czerwone drewno) wychodzą przesunięte
+/// o kilka stopni w odcieniu. Para inset/outset to standardowy sposób
+/// AgX na ograniczenie tego efektu — wsuwa kolory do wnętrza gamutu
+/// przed kompresją i przywraca je po krzywej. Bez niej jasne partie
+/// dostają widoczny przesmyk w magenta.
+///
+/// Jak `linear_srgb_to_linear_rec2020`: wartości wierszami, więc `transpose()`.
+fn agx_inset() -> mat3x3<f32> {
+    return transpose(mat3x3<f32>(
+        vec3<f32>(0.856627153315983, 0.137318972929847, 0.11189821299995),
+        vec3<f32>(0.0951212405381588, 0.761241990602591, 0.0767994186031903),
+        vec3<f32>(0.0482516061458583, 0.101439036467562, 0.811302368396859),
+    ));
+}
+
+/// Macierz „outset" — odwrotność insetu, używana po krzywej tonalnej.
+fn agx_outset() -> mat3x3<f32> {
+    return transpose(mat3x3<f32>(
+        vec3<f32>(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
+        vec3<f32>(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
+        vec3<f32>(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405),
+    ));
+}
+
+/// Rec.2020 -> linear sRGB. Odwrotność powyższej macierzy.
+///
+/// Ta sama uwaga o `transpose()` i o wypisywaniu wierszami.
+fn linear_rec2020_to_linear_srgb() -> mat3x3<f32> {
+    return transpose(mat3x3<f32>(
+        vec3<f32>(1.6605, -0.1246, -0.0182),
+        vec3<f32>(-0.5876, 1.1329, -0.1006),
+        vec3<f32>(-0.0728, -0.0083, 1.1187),
+    ));
 }
 
 /// Krzywa S AgX — wielomian 6. stopnia.
@@ -164,28 +217,63 @@ fn agx_contrast(x: vec3<f32>) -> vec3<f32> {
 /// AgX celowo odbarwia jasne partie (żeby światła nie były kolorowymi
 /// plamami). Przywracamy trochę nasycenia, bo obraz ma być
 /// „rysunkowy" — bez tego neonowe listwy wyglądają jak szare smugi.
+///
+/// ## Dlaczego `pow` ma wykładnik poniżej 1
+///
+/// Wartości po `agx_contrast` to 0..1, a `pow(v, k)` dla `k > 1`
+/// **przyciemnia** (0.5^1.15 = 0.45), nie rozjaśnia. Poprzedni
+/// komentarz twierdził odwrotnie, więc kod robił dokładnie to, czego
+/// nie chciał: zamykał środek zakresu i pogrubiał cienie. Stąd wrażenie
+/// „mętnej soczewki" — najmocniejsze właśnie tam, gdzie jest
+/// najwięcej tonów, czyli na trawie i niebie.
+///
+/// `1/1.06 ≈ 0.943` to subtelne rozjaśnienie: otwiera środek
+/// zakresu o kilka procent, nie rozjaśniając bieli.
 fn agx_look(v: vec3<f32>) -> vec3<f32> {
     let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
     let luma = dot(v, lw);
-    // `power` 1.15 rozjaśnia środek zakresu bez wypalenia highlights.
-    var val = pow(max(v, vec3<f32>(0.0)), vec3<f32>(1.15));
-    // 1.25: AgZ wraca do kolorów, ale nie do jaskrawego pastelu.
+    var val = pow(max(v, vec3<f32>(0.0)), vec3<f32>(1.0 / 1.06));
+    // 1.25: AgX wraca do kolorów, ale nie do jaskrawego pastelu.
     val = luma + 1.25 * (val - luma);
     return clamp(val, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 /// Pełny tonemapping AgX: HDR liniowe -> liniowe do sRGB.
+///
+/// Przebieg w kolejności referencyjnej (Filament / Blender 4 / three.js,
+/// patrz PR #27413 „AgX: add required gamut mapping"):
+///   1. `sRGB -> Rec.2020` — AgX liczy na primariesach Rec.2020,
+///   2. `inset` — wsuwa kolory do wnętrza gamutu,
+///   3. `log2` i normalizacja do zakresu [0,1],
+///   4. krzywa S (wielomian) — miękkie przejścia tonalne,
+///   5. `look` — nasycenie i gamma,
+///   6. `outset` — wyprowadzenie kolorów z powrotem,
+///   7. `pow(2.2)` — powrót do wartości liniowych,
+///   8. `Rec.2020 -> sRGB` + `clamp` — mapowanie gamutu.
+///
+/// Kroki 1 i 8 są tym, czego brakowało wcześniej: w ich miejscu stała
+/// własna para `agx_transform` / `agx_transform_inv`, której w
+/// referencyjnym AgX nie ma. To one odpowiadały za trwały przesmyk
+/// w magenta na jasnych i nasyconych barwach.
+///
+/// Ostatni `clamp` to mapowanie gamut, nie „zabezpieczenie": AgX
+/// pracuje na szerszym gamut niż Rec.709, więc bez ograniczenia
+/// wartości spoza gamut zostałyby obcięte przy zapisie.
 fn agx_tonemap(x: vec3<f32>) -> vec3<f32> {
     // `max(x, 0)`: ujemne wartości (możliwe po odejmowaniu w
     // specular occlusion) dałyby NaN w `log2`.
-    var val = agx_transform() * max(x, vec3<f32>(0.0));
+    var val = linear_srgb_to_linear_rec2020() * max(x, vec3<f32>(0.0));
+    val = agx_inset() * val;
     val = clamp(log2(max(val, vec3<f32>(1e-10))), vec3<f32>(AGX_MIN_EV), vec3<f32>(AGX_MAX_EV));
     val = (val - AGX_MIN_EV) / (AGX_MAX_EV - AGX_MIN_EV);
+    val = clamp(val, vec3<f32>(0.0), vec3<f32>(1.0));
     val = agx_contrast(val);
     val = agx_look(val);
-    val = agx_transform_inv() * val;
-    // Wrót do liniowych: resztę sRGB robi sprzęt przy zapisie.
-    return pow(max(val, vec3<f32>(0.0)), vec3<f32>(2.2));
+    val = agx_outset() * val;
+    val = pow(max(val, vec3<f32>(0.0)), vec3<f32>(2.2));
+    val = linear_rec2020_to_linear_srgb() * val;
+    // Resztę sRGB koduje sprzęt przy zapisie na powierzchnię.
+    return clamp(val, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn luma(c: vec3<f32>) -> f32 {

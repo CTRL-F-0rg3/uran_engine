@@ -211,7 +211,21 @@ impl Game {
             l.light_dir = Vec3::new(0.42, 0.66, 0.62).normalize();
             // Ciepłe, lekko złotawe — popołudniowe słońce nad polem.
             l.light_color = [1.0, 0.95, 0.84];
-            l.ambient = [0.36, 0.45, 0.60];
+            // 0.36/0.45/0.60 → 0.13/0.16/0.21.
+            //
+            // Stara wartość była 3-4× większa od natężenia słońca w
+            // sensie proporcji i **zalewała każdą powierzchnię
+            // niebieskim rozświetleniem**: na zrzucie widać było to jako
+            // trawa w jednolitym, „plastikowym" odcieniu i budynki
+            // przesunięte w fiolet. Przy słońcu 4.0 i takim ambientcie
+            // kadr nie miał żadnego kontrastu — cień i strona na słońcu
+            // wyglądały tak samo, tylko inaczej zabarwione.
+            //
+            // 0.13/0.16/0.21 nadal „niesie niebo" (nie zerowe), więc
+            // cień jest chłodny i czytelny, ale realnie ciemniejszy
+            // od strony naświetlonej. Zgodne z globalnym domyślnym
+            // `Lighting::default()`, które ma dokładnie te wartości.
+            l.ambient = [0.13, 0.16, 0.21];
         }
         {
             let cam = scene.camera_mut();

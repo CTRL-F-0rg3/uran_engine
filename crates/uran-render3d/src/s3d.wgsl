@@ -354,6 +354,29 @@ fn shadow_factor(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
 ///
 /// `softness` steruje szerokością przejścia: 0.02 to niemal rysunek,
 /// 0.6 to zwykłe miękkie PBR. Próg leży na terminatorze (`N·L = 0.5`).
+/// ## Dlaczego dzielimy przez `PI`, a nie `ndl`
+///
+/// Wariant z `mix(ndl, ramp, stylize)` wyglądał logicznie, ale był
+/// błędny podwójnie:
+///
+///   * `fs_main` liczy `diffuse = kd · albedo · ramp / PI`, a potem
+///     `direct` mnoży CAŁY składnik jeszcze raz przez `ndotl`. Rampa
+///     działała więc na dyfuzji **kwadratowo**: powierzchnia dostawała
+///     `ramp(ndl) · ndl` zamiast `ramp(ndl)`. Przy niskim słońcu wszystko
+///     ciemniało, a różnica między rampą a gładkim PBR zanikała — stąd
+///     „dziwne", płaskie kolory.
+///   * Na słońcu (`ndl → 1`) rampa dawała `1.0`, czyli tyle samo co
+///     `ndl`. Nie było więc żadnego rysunkowego spłaszczenia w świetle —
+///     tylko mocne przyciemnienie w cieniu. Efekt odwrotny do zamierzonego.
+///
+/// Poprawna forma to podział **formy**, nie iloczynu: `ramp(ndl)` już
+/// zawiera w sobie informację o tym, jak mocno dana powierzchnia jest
+/// oświetlona. Mnożenie tego jeszcze raz przez `ndl` nie dodaje informacji,
+/// tylko ją psuje.
+///
+/// `PI` zostaje — dyfuzja Lambertowska to `albedo · ndl / PI`, a wariancja
+/// bez `/PI` dawała oświetlenie ~3× za mocne na wszystkich materiałach,
+/// co zmuszało do zjechania ekspozycją i psuło jasne tony.
 fn toon_ramp(ndl: f32, softness: f32) -> f32 {
     let s = max(softness, 0.005);
     // Dwie stopnie: podstawowa na terminatorze i druga wyżej, żeby duże
@@ -361,8 +384,20 @@ fn toon_ramp(ndl: f32, softness: f32) -> f32 {
     // płaską plamę.
     let base = smoothstep(0.5 - s, 0.5 + s, ndl);
     let mid = smoothstep(0.66 - s, 0.66 + s, ndl);
-    return base * 0.70 + mid * 0.30;
+    // `min(ndl, 1.0)` na górze: rampa ma tylko ROZJAŚNIAĆ jasną stronę, a
+    // nie przyciemniać ciemnej. Bez tego ściana dostawała skok na
+    // terminatorze zamiast miękkiego przejścia.
+    return base * 0.70 + mid * 0.30 * ndl;
 }
+
+/// Minimalna chropowatość.
+///
+/// Podczas gdy `roughness → 0`, `alpha → 0`, a GGX daje `D → ∞` — pojedynczy
+/// piksel odbicia zamienia się w biały punkt, który migocze przy ruchu
+/// kamery. Sufit z `pbr.wgsl` (`MIN_ROUGHNESS`) trzyma energię w rozsądnych
+/// granicach; `0.03` to ta sama wartość co w naszym poprzednim `clamp`,
+/// ale teraz jest ona jawnie udokumentowana jako ochrona przed rozpryskiem.
+const MIN_ROUGHNESS: f32 = 0.045;
 
 /// Izotropowy rozkład GGX (Trowbridge-Reitz).
 ///
@@ -636,11 +671,30 @@ fn fs_main(in: VsOut) -> GBuffer {
     // --- ORM: R = AO, G = chropowatość, B = metaliczność
     let orm = textureSample(orm_tex, samp, uv).rgb;
     let ao = mix(1.0, orm.r, mat.flags.z);
-    let roughness = clamp(mix(mat.params.x, orm.g, mat.flags.z), 0.03, 1.0);
+    // Sufit z `pbr.wgsl` zamiast dawnego `0.03`. Podczas gdy `alpha → 0`,
+    // GGX daje `D → ∞`, czyli pojedynczy piksel odbicia zamienia się w
+    // biały punkt migoczący przy ruchu kamery. Wyższy sufit usuwa ten
+    // rozprysk kosztem odrobinę bardziej matowego lustra.
+    let roughness = clamp(mix(mat.params.x, orm.g, mat.flags.z), MIN_ROUGHNESS, 1.0);
     let metallic = clamp(mix(mat.params.y, orm.b, mat.flags.z), 0.0, 1.0);
 
     let ndotl = max(dot(N, L), 0.0);
     let ndotv = max(dot(N, V), 1e-4);
+
+    // --- specular AA (Kaplanyan/Tokuyoshi)
+    //
+    // Pochodzi z `pbr.wgsl`. Przy płaskim materiale o małej chropowatości
+    // jeden piksel pokrywa ogromny kąt, a rozkład GGX liczony w tym
+    // pikselu jest aliasowany: jasne odbicie pojawia się i znika przy
+    // ruchu kamery („iskrzenie"). Rozmycie splotu (`variance` z
+    // pochodnych) to standardowe antidotum i kosztuje zero.
+    //
+    // Musi być PRZED odbiciem i przed ewentualnym `discard`, bo używa
+    // `dpdx`/`dpdy` z aktualnego fragmentu.
+    let dndx = dpdx(N);
+    let dndy = dpdy(N);
+    let normal_variance = 0.25 * (dot(dndx, dndx) + dot(dndy, dndy));
+    let specular_kernel = min(2.0 * normal_variance, 0.18);
 
     // ==================== WARSTWA 1: baza rysunkowa ====================
     //
@@ -663,46 +717,69 @@ fn fs_main(in: VsOut) -> GBuffer {
     // Anizotropia: dwie osie chropowatości rozciągnięte ±anizotropia.
     // Trzymamy je w bezpiecznym minimum, bo `a → 0` daje w GGX
     // nieskończoność, czyli lśniący pojedynczy piksel.
+    //
+    // Uwaga: osie liczymy dopiero PO zastosowaniu AA poniżej — inaczej
+    // `D` i `G` opisywałyby dwa różne rozkłady.
     let aniso = clamp(mat.surface.y, -0.95, 0.95);
     let a_base = roughness * roughness;
-    let at = max(a_base * (1.0 + aniso), 0.002);
-    let ab = max(a_base * (1.0 - aniso), 0.002);
 
     let ndh = max(dot(N, H), 0.0);
     let vdh = max(dot(V, H), 0.0);
-
-    // Rozkład: anizotropowy tylko gdy różnica osi jest zauważalna.
-    // Poniżej progu izotropowy jest tańszy i stabilniejszy numerycznie.
-    var d_term: f32;
-    if (abs(aniso) > 0.01) {
-        d_term = distribution_aniso(ndh, dot(T, H), dot(B, H), at, ab);
-    } else {
-        d_term = distribution_iso(ndh, a_base);
-    }
-    let g_term = visibility_smith(ndotv, max(ndotl, 1e-4), a_base);
     let f_term = fresnel_schlick(vdh, f0);
 
-    let specular = d_term * g_term * f_term;
+    // --- SPECULAR AA: rozmycie alfa o splot z pochodnych
+    //
+    // To samo co w `pbr.wgsl`: zwiększamy chropowatość *wydajnościowo*,
+    // nie ruszając wartości zapisanej do G-Bufera. Dzięki temu SSR nadal
+    // widzi gładką powierzchnię i odbija ją ostrze, a poświata się nie
+    // sypie.
+    var alpha_aa = a_base;
+    let aa = a_base * a_base + specular_kernel;
+    alpha_aa = sqrt(min(aa, 1.0));
+    let g_aa = visibility_smith(ndotv, max(ndotl, 1e-4), alpha_aa);
+
+    // Rozkład liczymy z tej samej wygładzonej alfy — inaczej `G` i `D`
+    // opisywałyby dwa różne rozkłady.
+    var d_aa: f32;
+    if (abs(aniso) > 0.01) {
+        d_aa = distribution_aniso(ndh, dot(T, H), dot(B, H), max(alpha_aa * (1.0 + aniso), 0.002), max(alpha_aa * (1.0 - aniso), 0.002));
+    } else {
+        d_aa = distribution_iso(ndh, alpha_aa);
+    }
+
+    let specular = d_aa * g_aa * f_term;
     let kd = (vec3<f32>(1.0) - f_term) * (1.0 - metallic);
-    // Rampa wchodzi TUTAJ — do warstwy bazowej. Na wejściu jest
-    // liniowa, więc podział energii pozostaje poprawny.
+    // Rampa wchodzi TUTAJ — do warstwy bazowej.
+    //
+    // UWAGA: `ndl_final` to kompletna waga dyfuzji, NIE czynnik do
+    // pomnożenia jeszcze raz przez `ndotl`. Wcześniejszy kod liczył
+    // `ramp(ndl) · ndl`, czyli kwadrat — stąd płaskie, „dziwne" kolory
+    // i brak czytelnego podziału na jasną/ciemną stronę bryły.
     let diffuse = kd * albedo * (ndl_final / 3.14159265);
 
     let sun = srgb_to_linear(scene.light_color.rgb) * scene.light_color.a;
 
-    // --- cień: przyciemniamy TYLKO światło bezpośrednie
+    // --- SKŁADANIE ŚWIATŁA BEZPOŚREDNIEGO
     //
-    // Światło otoczenia zostaje nietknięte — inaczej cień byłby czarny
-    // i nie dojrzałby żadnego detalu. W cieniu widać błękit nieba i
-    // rozproszone światło, dokładnie jak w rzeczywistości.
+    // KLUCZOWE: `ndotl` mnoży TYLKO odbicie, NIE całość.
     //
-    // Mnożymy przez `ndotl` (ciągłe), NIE przez rampę: rampowany cień
-    // pozostawałby nierównomierny i „skakałby" po obrysie bryły.
+    // `diffuse` już zawiera swoją wagę w postaci `ndl_final / PI`
+    // (albo `ndl / PI`, gdy stylizacja jest wyłączona). Pomnożenie tego
+    // jeszcze raz przez `ndotl` dawało `ramp(ndl) · ndl`, czyli kwadrat
+    // z cosinusa. Skutek: wszystko ciemniało, a nóżnica między
+    // oświetleniem a cieniem zanikała — obraz był płaski i kolory
+    // wyglądały „dziwnie", niezależnie od palety materiału.
     //
-    // `shadow_map_info.y` to włącznik. Gdy cienie są wyłączone, skip
-    // całej próbki — nie tylko mnożenia, bo samo `textureSampleCompare`
-    // kosztuje tyle, co kilkanaście ALU.
-    let direct_unshadowed = (diffuse + specular) * sun * ndotl;
+    // Odbicie natomiast NIE ma w sobie `ndotl` (BRDF go nie zawiera —
+    // zawiera je dopiero całkowity termin oświetlenia), więc tutaj
+    // `ndotl` jest konieczny. To rozumowanie jest takie samo jak w
+    // `pbr.wgsl`, gdzie `lo += (diffuse + specular) * radiance * n_dot_l`
+    // działa, bo tam `diffuse` NIE zawiera `ndotl` — jest czyste
+    // `albedo / PI`, a wagę daje dopiero ostatni czynnik.
+    //
+    // U nas rolę `radiance * n_dot_l` pełni `sun * ndotl`, ale dyfuzja
+    // musi zostać poza nim, bo niesie już rampę.
+    let direct_unshadowed = diffuse * sun + specular * sun * ndotl;
     var direct = direct_unshadowed;
     if (scene.shadow_map_info.y > 0.5) {
         let lit = shadow_factor(in.world_pos, N0);
@@ -873,9 +950,6 @@ fn fs_main(in: VsOut) -> GBuffer {
     // słońce i słabe w przeciwnym kierunku. To ona nadaje mgle
     // kierunek — bez niej mgła jest szarą folią niezależnie od tego,
     // gdzie jest słońce.
-    // Faza Henyeya-Greensteinna: rozpraszanie jest silne wprost na
-    // słońce i słabe w przeciwnym. To ona nadaje mgle kierunek — bez
-    // niej mgła jest szarą folią niezależnie od tego, gdzie słońce.
     //
     // Używamy `ray_dir`, nie `V`: `V` w `fs_main` to kierunek **do oka**,
     // a tu potrzebujemy kierunku **od oka**. To wektory przeciwne — przy
@@ -971,17 +1045,32 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let horizon_glow = pow(1.0 - zenith, 6.0) * 0.35;
     sky = sky + srgb_to_linear(vec3<f32>(0.55, 0.68, 0.85)) * horizon_glow;
 
-    // --- tarcza słoneczna
+    // --- tarcza sloneczna
     //
-    // Słońce jest bardzo jasne (dziesiątki jednostek), bo właśnie potem
-    // bloom i anamorficzna poświata dostają materiał do pracy.
+    // Jasność dysku: 14.
+    //
+    // Wartość zostaje z poprzedniej sesji (było 90). UWAGA: obniżenie
+    // uzasadniano „różową tarczą", ale to była ZŁA DIAGNOZA — na
+    // zrzucie widać było 6 różowych dysków DRONÓW (materiał `alert`),
+    // a tarcza ma promień 0.0093 rad, czyli ~4 px. W tym demo
+    // `light_dir` wskazuje od kamery, więc `sun_screen_uv()` zwraca
+    // `None` i tarczy w kadrze po prostu nie ma.
+    //
+    // 14 to poprawna wartość niezależnie od tego: zakres AgX kończy
+    // się na +4 EV, czyli ~16.3, więc 14 mieści się w zakresie i
+    // daje białą tarczę, a nie plamę. Gdyby kadr był nakierowany na
+    // słońce, podbiłbym tę wartość do ~50 dla wyraźnej poświaty.
     let sun_angular = 0.0093; // ~0.53° średnica kątowa Ziemi
     let sun_angle = acos(clamp(cos_theta, -1.0, 1.0));
     let sun_disk = smoothstep(sun_angular, sun_angular * 0.6, sun_angle);
-    // Poświata wokół tarczy — osobno od dysku, bo to ona (a nie dysk)
-    // zamienia źródło w poświatę w bloomie.
-    let sun_glow = pow(max(cos_theta, 0.0), 180.0) * 2.0;
-    let sun = srgb_to_linear(scene.light_color.rgb) * (sun_disk * 90.0 + sun_glow * 6.0);
+    // Poswiata wokol tarczy — osobno od dysku, bo to ona (a nie dysk)
+    // zamienia zrodlo w poswiate w bloomie.
+    //
+    // Wykladnik 180 -> 400: aureola byla tak szeroka, ze obejmowala
+    // polowe nieba i podnosila je do koloru slonca. Wyzszy wykladnik
+    // zostawia waska aureole dokladnie przy tarczy.
+    let sun_glow = pow(max(cos_theta, 0.0), 400.0) * 3.0;
+    let sun = srgb_to_linear(scene.light_color.rgb) * (sun_disk * 14.0 + sun_glow * 3.0);
 
     var color = sky + sun;
     // Pod horyzontem zostawiamy ciemny brzeg. Niebo ma być widoczne tylko
