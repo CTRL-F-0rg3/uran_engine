@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ASSET_ROOT_ENV","DEFAULT_ASSET_ROOT"],"fn":["asset_dir_candidates","find_asset_dir"],"struct":["AssetServer"]};

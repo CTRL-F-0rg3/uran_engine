@@ -167,26 +167,42 @@ impl App3d {
             l.light_color = [1.0, 0.90, 0.76];
             // 6.5: słońce musi WYRAŹNIE dominować nad otoczeniem.
             //
-            // Przy 3.4 różnica między plamą w słońcu a cieniem była
-            // ledwie czytelna, a pomiar histogramy zrzutu pokazywał
-            // medianę 52/255 i 30% pikseli poniżej 20 — obraz był
-            // prześwietlony mimo że wartości HDR były poprawne.
-            //
             // Powód jest w dyfuzji Lambertowskiej: `albedo · N·L / π`
             // dzieli energię przez π, więc do osiągnięcia jasnego dnia
             // natężenie musi być rzędu 6, nie 3. Stąd 6.5.
+            //
+            // Uwaga na albedo: `palette::FLOOR` = 0.26 podane jest
+            // w sRGB, więc liniowo jest 0.055. Podłoga w słońcu
+            // wychodzi `0.055 · 0.58 / π · 6.5` = 0.063 → 87/255,
+            // czyli jasny, ale nie prześwietlony beton.
             l.intensity = 6.5;
             // Ambient NIESIE NIEBO — chłodny, wyraźnie błękitny. To on
             // oświetla cienie; gdyby był szary, cień wyglądałby jak
             // brak światła, a nie brak słońca.
             //
-            // 0.30/0.38/0.52 → 0.15/0.19/0.26. Przy słońcu **6.5**
-            // (nie 4.0 jak w domyślnych) proporcja i tak jest 20×
-            // mniejsza niż w `Lighting::default()`, ale bezwzględnie
-            // ambient nadal wnosił zbyt dużo: podłoga dostawała
-            // płaską, niebieskawą poświatę, która zabijała kontrast
-            // między plamą słońca a cieniem.
-            l.ambient = [0.15, 0.19, 0.26];
+            // 0.15/0.19/0.26 → 0.45/0.57/0.78 (×3).
+            //
+            // ## Dlaczego poprzednia wartość była zbyt mała
+            //
+            // Wcześniejszy komentarz uzasadniał 0.15/0.19/0.26
+            // „mniejszą proporcją do słońca", ale ta proporcja nigdy
+            // nie została przeliczona poprawnie. `palette::FLOOR`
+            // = 0.26 jest podane w **sRGB**, a shader przelicza je na
+            // liniowe, więc albedo podłogi to `srgb_to_linear(0.26)`
+            // = **0.055**, nie 0.26.
+            //
+            // Wkład samego otoczenia w podłogę to zatem:
+            // `srgb_to_linear(0.15) · 0.055` = `0.0194 · 0.055`
+            // = **0.00107** liniowo. Przy `AGX_MIN_EV = -12.47`
+            // wypada to na **1/255** — cień był dosłownie czarny.
+            //
+            // Podbicie o ×3 daje `0.0574 · 0.055` = 0.00316, czyli
+            // **21/255** przy 23% jasności plamy słonecznej (93/255).
+            // To standardowy udział cienia w rysunku rysunkowym:
+            // czytelna forma, ale wciąż wyraźnie ciemniejsza od słońca.
+            // Przy ×4 cień wchodzi na 39/255 i kontrast między
+            // plamą a cieniem zanika.
+            l.ambient = [0.45, 0.57, 0.78];
         }
 
         // --- stylizacja: miara hybrydy ---

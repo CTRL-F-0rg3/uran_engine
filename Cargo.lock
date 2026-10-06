@@ -1952,6 +1952,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "uran-anim"
+version = "0.1.0"
+dependencies = [
+ "uran-asset",
+ "uran-ecs",
+ "uran-math",
+ "uran-render",
+]
+
+[[package]]
 name = "uran-asset"
 version = "0.1.0"
 dependencies = [
@@ -1985,10 +1995,12 @@ name = "uran-engine"
 version = "0.1.0"
 dependencies = [
  "pollster",
+ "uran-anim",
  "uran-asset",
  "uran-core",
  "uran-ecs",
  "uran-math",
+ "uran-physics",
  "uran-render",
  "uran-tilemap",
  "wgpu",
@@ -2017,6 +2029,9 @@ dependencies = [
 [[package]]
 name = "uran-physics"
 version = "0.1.0"
+dependencies = [
+ "uran-math",
+]
 
 [[package]]
 name = "uran-render"

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ARENA_HALF"],"fn":["clamp_to_arena","flat_len","snap_to_ground","sphere_hit","wrap_angle"],"struct":["Rng","Terrain","World"]};

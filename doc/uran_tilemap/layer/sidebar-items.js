@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FLAGS_MASK","INDEX_MASK","TILE_EMPTY"],"fn":["flags_from_packed","index_from_packed","pack_tile"],"struct":["TileLayer"]};

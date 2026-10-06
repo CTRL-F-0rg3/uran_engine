@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["VERSION"],"mod":["autotile","layer","map","prelude","tileset","xml"]};

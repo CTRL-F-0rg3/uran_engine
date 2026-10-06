@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["endfield_3d",[["impl <a class=\"trait\" href=\"uran_render/scene3d/trait.Scene3d.html\" title=\"trait uran_render::scene3d::Scene3d\">Scene3d</a> for <a class=\"struct\" href=\"endfield_3d/struct.SceneProxy.html\" title=\"struct endfield_3d::SceneProxy\">SceneProxy</a>"]]],["farm_simulator",[["impl <a class=\"trait\" href=\"uran_render/scene3d/trait.Scene3d.html\" title=\"trait uran_render::scene3d::Scene3d\">Scene3d</a> for <a class=\"struct\" href=\"farm_simulator/struct.SceneProxy.html\" title=\"struct farm_simulator::SceneProxy\">SceneProxy</a>"]]],["junak_rider",[["impl <a class=\"trait\" href=\"uran_render/scene3d/trait.Scene3d.html\" title=\"trait uran_render::scene3d::Scene3d\">Scene3d</a> for <a class=\"struct\" href=\"junak_rider/struct.SceneProxy.html\" title=\"struct junak_rider::SceneProxy\">SceneProxy</a>"]]],["uran_render3d",[["impl <a class=\"trait\" href=\"uran_render/scene3d/trait.Scene3d.html\" title=\"trait uran_render::scene3d::Scene3d\">Scene3d</a> for <a class=\"struct\" href=\"uran_render3d/scene/struct.Renderer3d.html\" title=\"struct uran_render3d::scene::Renderer3d\">Renderer3d</a>"]]],["uran_tanks",[["impl <a class=\"trait\" href=\"uran_render/scene3d/trait.Scene3d.html\" title=\"trait uran_render::scene3d::Scene3d\">Scene3d</a> for <a class=\"struct\" href=\"uran_tanks/struct.SceneProxy.html\" title=\"struct uran_tanks::SceneProxy\">SceneProxy</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[275,285,276,295,273]}

@@ -7,6 +7,7 @@ members = [
     "uran-game",     # <-- Zmienione z "game"
     "uran-tanks", "stardew-demo",    # FPS z czołgami (renderer 3D)
     "endfield-3d",   # akcja 3D w stylu Endfield (PBR + NPR)
+    "crates/uran-anim", # animacja 2D: arkusze klatek, kierunki, maszyna stanów
 ]
 
 [workspace.dependencies]
@@ -34,3 +35,4 @@ uran-physics = { path = "crates/uran-physics" }
 uran-audio = { path = "crates/uran-audio" }
 uran-engine = { path = "uran-engine" }
 uran-tilemap = { path = "crates/uran-tilemap" }
+uran-anim = { path = "crates/uran-anim" }

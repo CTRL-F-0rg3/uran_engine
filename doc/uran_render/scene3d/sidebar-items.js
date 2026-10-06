@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Scene3dTarget"],"trait":["Scene3d"]};

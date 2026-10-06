@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["box_faces","box_mesh","face_normal","faces_to_mesh","tank_cupola","tank_gun","tank_hull","tank_track","tank_turret","tank_wheel"],"mod":["palette","tank_dim"],"struct":["Face"]};

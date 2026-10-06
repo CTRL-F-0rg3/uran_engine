@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AxisUp"],"fn":["load_from_file","load_from_file_with_axes","parse_obj"],"struct":["FaceRef","ImportedModel","ModelPart","ObjScene","ParseError"]};

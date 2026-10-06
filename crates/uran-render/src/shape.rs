@@ -39,6 +39,12 @@ fn point_in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
 /// wklęsłych (np. gwiazda) działa poprawnie, w przeciwieństwie do
 /// triangulacji „wachlarzem". Dla kształtów samoprzecinających się
 /// zwraca pustą listę (lepiej nie rysować niż rysować śmieci).
+///
+/// **Powtarzające się sąsiednie punkty są usuwane.** To nie kosmetyka:
+/// kształt „pigułka" (`rounded_rect` z `radius == połowa wysokości`) ma
+/// dwa środki łuków dokładnie na sobie, więc bez tego kroku ear-clipping
+/// nie znajduje żadnego ucha i zwraca pustą listę — czyli pasek HUD-u
+/// po prostu znikałby z ekranu zamiast być zaokrąglony.
 pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
     let mut indices: Vec<u32> = Vec::new();
     if points.len() < 3 {
@@ -51,10 +57,33 @@ pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
         return indices;
     }
 
+    // Usuwamy duplikaty sąsiadów, trzymając mapowanie na indeksy wejścia,
+    // bo zwracane indeksy muszą wskazywać **podane** punkty.
+    let mut poly: Vec<Vec2> = Vec::with_capacity(points.len());
+    let mut source: Vec<usize> = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        if poly
+            .last()
+            .is_some_and(|last| (*last - *p).length_squared() < 1e-12)
+        {
+            continue;
+        }
+        poly.push(*p);
+        source.push(i);
+    }
+    // Punkt powtarzający się na styku końca i początku listy.
+    while poly.len() > 1 && (poly[0] - poly[poly.len() - 1]).length_squared() < 1e-12 {
+        poly.pop();
+        source.pop();
+    }
+    if poly.len() < 3 {
+        return indices;
+    }
+
     // algorytm zakłada kolejność CCW
-    let mut poly: Vec<Vec2> = points.to_vec();
     if signed_area(&poly) < 0.0 {
         poly.reverse();
+        source.reverse();
     }
 
     let mut remaining: Vec<usize> = (0..poly.len()).collect();
@@ -86,7 +115,11 @@ pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
                 continue;
             }
 
-            indices.extend_from_slice(&[prev as u32, curr as u32, next as u32]);
+            indices.extend_from_slice(&[
+                source[prev] as u32,
+                source[curr] as u32,
+                source[next] as u32,
+            ]);
             remaining.remove(i);
             clipped = true;
             break;
@@ -99,9 +132,9 @@ pub fn triangulate(points: &[Vec2]) -> Vec<u32> {
 
     if remaining.len() == 3 {
         indices.extend_from_slice(&[
-            remaining[0] as u32,
-            remaining[1] as u32,
-            remaining[2] as u32,
+            source[remaining[0]] as u32,
+            source[remaining[1]] as u32,
+            source[remaining[2]] as u32,
         ]);
     }
     indices
@@ -336,6 +369,70 @@ mod tests {
             area < 400.0 && area > 340.0,
             "zaokrąglenia zjadły narożniki: {area}"
         );
+    }
+
+    /// Prostokąt z `radius == połowa wysokości` to „pigułka": dwa środki
+    /// łuków lądują dokładnie na sobie. Bez usuwania duplikatów
+    /// ear-clipping nie znajduje ucha i zwraca pustą siatkę — pasek HUD-u
+    /// znikałby z ekranu. To dokładnie ten kształt, którego używają paski
+    /// postępu i statystyk.
+    #[test]
+    fn pill_shaped_rect_is_not_dropped() {
+        let rect = Rect::from_xywh(0.0, 0.0, 60.0, 8.0);
+        let m = rounded_rect(rect, 4.0, 8, Color::WHITE);
+        assert!(m.triangle_count() > 0, "pigułka musi się triangulować");
+        assert!(m.validate());
+
+        // pole kapsuły = prostokąt (w - 2r) * h + koło o promieniu r;
+        // inaczej: w*h - (4 - pi) * r^2
+        let area = triangle_area_sum(&m);
+        let r = 4.0_f32;
+        let expected = 60.0 * 8.0 - (4.0 - std::f32::consts::PI) * r * r;
+        assert!(
+            (area - expected).abs() < 1.0,
+            "pole = {area}, oczekiwano ~{expected}"
+        );
+    }
+
+    /// Duplikaty **sąsiadujących** punktów nie mogą psuć siatki — tak
+    /// dokładnie generuje je `rounded_rect`, gdy dwa sąsiednie rogi mają
+    /// ten sam środek łuku.
+    #[test]
+    fn duplicate_points_are_deduplicated() {
+        let square = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 0.0), // duplikat sąsiada
+            Vec2::new(10.0, 10.0),
+            Vec2::new(0.0, 10.0),
+            Vec2::new(0.0, 10.0), // duplikat sąsiada
+            Vec2::new(0.0, 0.0),  // duplikat pierwszego (zawiązanie)
+        ];
+        let indices = triangulate(&square);
+        assert!(!indices.is_empty(), "duplikaty nie mogą wyzerować siatki");
+        assert!(
+            indices.iter().all(|i| (*i as usize) < square.len()),
+            "indeksy muszą wskazywać wejściowe punkty"
+        );
+        let area = triangle_area_sum(&polygon(&square, Color::WHITE));
+        assert!((area - 100.0).abs() < 0.01, "pole = {area}");
+    }
+
+    /// Wielokąt podany w kolejności zgodnej z zegarem (CW) też musi dać
+    /// poprawne pole — indeksy wskazują wejście, nie odwróconą tablicę.
+    #[test]
+    fn clockwise_polygon_keeps_correct_indices() {
+        let mut points = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(0.0, 10.0),
+        ];
+        let ccw_area = triangle_area_sum(&polygon(&points, Color::WHITE));
+        points.reverse();
+        let cw_area = triangle_area_sum(&polygon(&points, Color::WHITE));
+        assert!((ccw_area - 100.0).abs() < 0.01, "pole CCW = {ccw_area}");
+        assert!((cw_area - 100.0).abs() < 0.01, "pole CW = {cw_area}");
     }
 
     #[test]

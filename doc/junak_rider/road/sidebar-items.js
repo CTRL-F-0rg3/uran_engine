@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ASPHALT","ASPHALT_WORN","EDGE_LINE","PAINT","RECENTER_AT","RECENTER_STEP","ROAD_HALF","ROAD_LEN","SHOULDER_W","VERGE","VERGE_W"],"fn":["build_road","quad_xz","stripe"],"struct":["RoadMeshes"]};

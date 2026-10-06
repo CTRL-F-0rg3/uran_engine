@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["blend_state","create_globals_bind_group_layout","create_sampler","create_texture_bind_group_layout","quad_indices","unit_quad_vertices"],"struct":["PipelineCache"]};

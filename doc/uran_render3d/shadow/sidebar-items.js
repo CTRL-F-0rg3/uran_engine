@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SHADOW_RES"],"fn":["light_matrix"],"struct":["SceneBounds","ShadowMap","ShadowSettings"]};

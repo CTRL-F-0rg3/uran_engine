@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ARENA_HALF","FLOOR_Y","VERTEX_WHITE"],"fn":["build_floor","build_meshes","merge_into","on_seam"],"mod":["palette"],"struct":["SceneMeshes"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_asset_dir"],"mod":["app","context","prelude"]};

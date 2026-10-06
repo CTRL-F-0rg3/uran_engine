@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["barycentric","box_corners","model_matrix"],"struct":["GpuMesh","InstanceModel","Mesh","SceneUniform","Vertex"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["GRASS","GRASS_DARK","GREEN","PANTS","RIPE","SHIRT","SKIN","SOIL","STEM"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["screen_matrix"],"struct":["Camera2d"]};

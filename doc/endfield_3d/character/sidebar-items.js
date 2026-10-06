@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HEIGHT"],"enum":["Stance"],"fn":["build","build_meshes","merge_into","rig","translate"],"struct":["CharacterMaterials","CharacterMeshes","Rig"]};

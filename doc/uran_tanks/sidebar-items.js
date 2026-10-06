@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CAM_BACK","CAM_UP","ENEMY_COUNT","FONT_FALLBACKS"],"fn":["build_draw_list","build_ground","draw_hud","main","push_tank","screenshot_path","setup","update","update_camera"],"mod":["geometry","tank","world"],"struct":["Game","Meshes","SceneProxy","TankPose"]};

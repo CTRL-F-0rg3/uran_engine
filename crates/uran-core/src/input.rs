@@ -53,6 +53,12 @@ pub struct Input {
     scroll_delta: Vec2,
     cursor_inside: bool,
     modifiers: ModifiersState,
+    /// Znaki wpisane **w tej klatce** — kolejka do pól tekstowych.
+    ///
+    /// Osobna od `keys`, bo `KeyCode` mówi **który klawisz**, a tu chodzi o
+    /// **co wpisano** (z układu, z diakrytykami). Bez tego edytor kręgu nie
+    /// ma jak wpisać własnego słowa.
+    chars: Vec<char>,
 }
 
 impl Input {
@@ -68,6 +74,27 @@ impl Input {
                 // (niezależny od układu klawiatury), więc wyciągamy wariant kodowy.
                 if let PhysicalKey::Code(code) = event.physical_key {
                     self.set_key(code, event.state);
+                }
+                // `text` to **znaki wprowadzone przez klawiaturę** — inaczej
+                // niż `physical_key`, bo respektuje układ i diakrytyki. Bez
+                // niego gra widzi tylko `KeyCode`, więc nie da się wpisać
+                // ani jednej litury (edytor kręgu potrzebuje pola „własne
+                // słowo", a tam ma być dowolny tekst, nie kody klawiszy).
+                //
+                // Przycisk trzymany w dół powtarzalby zdarzenia, więc bierzemy
+                // znaki **tylko** przy naciśnięciu.
+                if event.state == ElementState::Pressed {
+                    if let Some(text) = &event.text {
+                        for c in text.chars() {
+                            // `Enter`/`Tab` w raporcie winit bywają jako `\r`
+                            // i `\t`; te nie są znakami do wypisania, a
+                            // `Backspace` też nie — obsługuję je osobno
+                            // z `KeyCode`.
+                            if !c.is_control() {
+                                self.push_char(c);
+                            }
+                        }
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
@@ -88,6 +115,28 @@ impl Input {
             }
             _ => {}
         }
+    }
+
+    /// Dokłada znak wpisany w tej klatce.
+    ///
+    /// Osobna metoda publiczna, bo testy nie chcą budować `WindowEvent` tylko
+    /// po to, by zasymulować wpisanie litery.
+    pub fn push_char(&mut self, c: char) {
+        self.chars.push(c);
+    }
+
+    /// Znaki wpisane w tej klatce, w kolejności.
+    ///
+    /// Zwraca **kolejkę**, nie tekst: dwie litery z dwóch zdarzeń w jednej
+    /// klatce dają dwie pozycje. Pusty wektor to „nic nie wpisano”, co
+    /// odróżnia od braku pola tekstowego.
+    pub fn typed_chars(&self) -> &[char] {
+        &self.chars
+    }
+
+    /// Czy w tej klatce wpisano jakikolwiek znak.
+    pub fn has_typed(&self) -> bool {
+        !self.chars.is_empty()
     }
 
     /// Ustawia stan klawisza (niezależne od winit — łatwiej testować).
@@ -175,6 +224,10 @@ impl Input {
         self.buttons_released.clear();
         self.scroll_delta = Vec2::ZERO;
         self.raw_motion = Vec2::ZERO;
+        // Znaki to **migawka**, jak `keys_pressed`: pole tekstowe ma je wziąć
+        // w tej klatce, w której je wpisano. Bez czyszczenia ta sama litera
+        // dopisywałaby się do pola co klatkę w nieskończoność.
+        self.chars.clear();
     }
 
     // --- Klawiatura ---
@@ -482,3 +535,37 @@ mod tests {
         assert!(!input.primary_just_pressed());
     }
 }
+
+    /// Znaki z `push_char` są **widoczne** w klatce, w której je wpisano.
+    #[test]
+    fn typed_chars_are_readable_in_the_same_frame() {
+        let mut input = Input::new();
+        assert!(!input.has_typed());
+        input.push_char('F');
+        input.push_char('E');
+        assert!(input.has_typed());
+        assert_eq!(input.typed_chars(), &['F', 'E']);
+    }
+
+    /// Po `end_frame` znaki **znikają** — inaczej ta sama litera dopisywałaby
+    /// się do pola co klatkę w nieskończoność.
+    #[test]
+    fn end_frame_clears_typed_chars() {
+        let mut input = Input::new();
+        input.push_char('F');
+        input.end_frame();
+        assert!(input.typed_chars().is_empty(), "znaki nie znikly");
+        assert!(!input.has_typed());
+    }
+
+    /// Znaki są niezależne od stanu klawiszy: po `end_frame` klawisz nadal jest
+    /// **wciśnięty** (trzymany), ale znak już dawno przepadł.
+    #[test]
+    fn typed_chars_are_independent_of_key_state() {
+        let mut input = Input::new();
+        input.set_key(KeyCode::KeyF, ElementState::Pressed);
+        input.push_char('f');
+        input.end_frame();
+        assert!(input.pressed(KeyCode::KeyF), "klawisz przestal byc wcisniety");
+        assert!(input.typed_chars().is_empty(), "znaki przeciekly do nastepnej klatki");
+    }

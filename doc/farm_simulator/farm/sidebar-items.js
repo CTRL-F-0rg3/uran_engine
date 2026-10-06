@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FIELD_D","FIELD_W","GROW_SECONDS","REACH","TILE"],"enum":["Tile"],"fn":["field_center","field_d_m","field_w_m","tile_at","tile_center"],"struct":["Farm"]};

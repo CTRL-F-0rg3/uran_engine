@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["circle","polygon","polyline","rect_outline","ring","rounded_rect","star","thick_line","triangulate"]};

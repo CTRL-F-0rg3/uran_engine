@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ARENA","BULLET_RADIUS","BULLET_SPEED","ENEMY_RADIUS","ENEMY_SPEED","FONT_FALLBACKS","MAX_BULLETS","MAX_ENEMIES","MAX_PARTICLES","PLAYER_RADIUS","PLAYER_SPEED","SPAWN_INTERVAL"],"fn":["draw","draw_hud","main","overlay","screenshot_path","setup","spawn_particles","update"],"mod":["infantry"],"struct":["Game","Particle"]};

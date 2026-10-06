@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DetectedEncoding","EncodingError"],"fn":["detect_encoding"],"struct":["Decoder"]};

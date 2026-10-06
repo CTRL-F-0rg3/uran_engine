@@ -17,10 +17,12 @@
 pub mod app;
 pub mod context;
 
+pub use uran_anim as anim;
 pub use uran_asset as asset;
 pub use uran_core as core;
 pub use uran_ecs as ecs;
 pub use uran_math as math;
+pub use uran_physics as physics;
 pub use uran_render as render;
 pub use uran_tilemap as tilemap;
 
@@ -33,6 +35,10 @@ pub use uran_asset::find_asset_dir;
 
 /// Wszystko, czego typowo potrzebuje gra w jednym `use`.
 pub mod prelude {
+    pub use crate::anim::{
+        AnimationClip, Animator, Character, CharacterConfig, CharacterSheets, EffectConfig, Facing,
+        LoopMode, MotionState, SpriteEffect, SpriteSheet,
+    };
     pub use crate::app::App;
     pub use crate::asset::{find_asset_dir, AssetServer, FontData, Handle, Image};
     pub use crate::context::{Ctx, WindowState};
@@ -41,6 +47,7 @@ pub mod prelude {
         BlendMode, Entity, Material, Mesh, Sprite, Transform, UvRect, Vertex, Visibility, World,
     };
     pub use crate::math::{Color, Mat3, Rect, Vec2, Vec3, Vec4};
+    pub use crate::physics::{CollisionWorld, Solid};
     pub use crate::render::{
         Camera2d, DrawList, FrameStats, GpuSim, GpuUnit, Graphics, MeshBuilder, Renderer,
         SimParams, SimStats, Team, TextAlign, UnitFlags,

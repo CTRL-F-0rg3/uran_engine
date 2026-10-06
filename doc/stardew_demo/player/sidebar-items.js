@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HITBOX","STEP_TIME"],"struct":["Player"]};

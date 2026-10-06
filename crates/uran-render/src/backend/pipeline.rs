@@ -57,15 +57,26 @@ pub fn create_globals_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGrou
     })
 }
 
-/// Wspólny sampler: najbliższy sąsiad + mitygacja liniowa.
+/// Wspólny sampler: **najbliższy sąsiad** (bez rozmycia).
+///
+/// `mag_filter`/`min_filter` to `Nearest`, **nie** `Linear`. Silnik rysuje
+/// pixel art, a próbkowanie liniowe miesza sąsiednie texele: na ekranie
+/// krawędzie klatek były rozmazane i nie dawało się odczytać kształtu
+/// sprite'a. Przy powiększeniu (`mag`) `Nearest` daje ostre kwadraty 1:1,
+/// a przy zmniejszeniu (`min`) twardy próbk czasem aliasuje — dlatego
+/// domyślnie zostawiamy `Nearest` dla obu, bo pixel art jest rysowany
+/// głównie w powiększeniu, a rozmycie i tak psuje czytelność.
+///
+/// Powyższy komentarz („najbliższy sąsiad + mitygacja liniowa”) **nie
+/// odpowiadał kodowi**: ustawione było `Linear` w obu polach.
 pub fn create_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Uran Sampler"),
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     })
 }

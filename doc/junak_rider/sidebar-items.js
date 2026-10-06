@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BIKE_HEIGHT","BIKE_LIFT","BIKE_YAW_OFFSET","CAM_BACK","CAM_SIDE","CAM_UP","FONT_FALLBACKS","MODEL_FILE"],"fn":["bike_matrix","build_draw_list","draw_hud","find_model","main","screenshot_path","setup","update","update_camera"],"mod":["bike","road"],"struct":["Game","Meshes","SceneProxy"]};

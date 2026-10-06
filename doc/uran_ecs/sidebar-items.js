@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["component"],"struct":["Entity","QueryBorrow","Ref","RefMut","World"]};

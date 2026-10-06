@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["gltf","json","mtl","obj"]};

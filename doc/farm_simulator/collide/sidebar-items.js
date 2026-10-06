@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_STEP","PLAYER_HEIGHT","PLAYER_RADIUS"],"struct":["Box","Solid","World"]};

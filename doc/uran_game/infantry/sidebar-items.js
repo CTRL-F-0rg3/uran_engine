@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ARMY_CAPACITY","REINFORCE_BATCHES","RESERVE_PERCENT"],"fn":["seed_of"],"struct":["Infantry","InfantryConfig"]};

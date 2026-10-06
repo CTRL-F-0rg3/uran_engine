@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ATLAS_SIZE"],"struct":["FontMetrics","FontRegistry","GlyphInfo","ShapedGlyph"]};

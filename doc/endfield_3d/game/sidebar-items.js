@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ATTACK_TIME","BOLT_LIFE","BOLT_SPEED","HITSTUN_TIME","MAX_AMMO","MAX_BOLTS","MAX_DRONES"],"fn":["wrap_angle"],"struct":["Bolt","Drone","Game","Impact","Input","Player"],"trait":["Yaw"]};

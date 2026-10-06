@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EulerRot"],"mod":["color","rect"],"struct":["IVec2","Mat2","Mat3","Mat4","Quat","UVec2","Vec2","Vec3","Vec4"]};

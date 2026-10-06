@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["VERSION"],"mod":["backend","batch","camera","compute","graphics","mesh_builder","renderer","scene3d","shape","text"]};

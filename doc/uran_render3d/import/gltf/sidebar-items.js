@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["UNSUPPORTED"],"enum":["AlphaMode"],"fn":["load","load_from_file"],"struct":["GltfError","GltfMaterial","GltfScene","GltfTexture","Joint","SkinMesh","SkinVertex"]};

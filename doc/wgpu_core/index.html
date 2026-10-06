@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This library safely implements WebGPU on native platforms. It is designed for integration into browsers, as well as wrapping into other language-specific user-friendly libraries."><title>wgpu_core - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="wgpu_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate wgpu_core</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../wgpu_core/index.html">wgpu_<wbr>core</a><span class="version">0.19.4</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#feature-flags" title="Feature flags">Feature flags</a><ul><li><a href="#backends-passed-through-to-wgpu-hal" title="Backends, passed through to wgpu-hal">Backends, passed through to wgpu-hal</a></li></ul></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#macros" title="Macros">Macros</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>wgpu_<wbr>core</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/wgpu_core/lib.rs.html#1-390">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This library safely implements WebGPU on native platforms.
+It is designed for integration into browsers, as well as wrapping
+into other language-specific user-friendly libraries.</p>
+<h3 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature flags</h3>
+<ul>
+<li>
+<p><strong><code>api_log_info</code></strong> — Log all API entry points at info instead of trace level.</p>
+</li>
+<li>
+<p><strong><code>resource_log_info</code></strong> — Log resource lifecycle management at info instead of trace level.</p>
+</li>
+<li>
+<p><strong><code>link</code></strong> <em>(enabled by default)</em> — Use static linking for libraries. Disale to manually
+link. Enabled by default.</p>
+</li>
+<li>
+<p><strong><code>renderdoc</code></strong> — Support the Renderdoc graphics debugger:
+<a href="https://renderdoc.org/">https://renderdoc.org/</a></p>
+</li>
+<li>
+<p><strong><code>strict_asserts</code></strong> — Apply run-time checks, even in release builds. These are in addition
+to the validation carried out at public APIs in all builds.</p>
+</li>
+<li>
+<p><strong><code>trace</code></strong> — Enable API tracing.</p>
+</li>
+<li>
+<p><strong><code>replay</code></strong> — Enable API replaying</p>
+</li>
+<li>
+<p><strong><code>serial-pass</code></strong> — Enable serializable compute/render passes, and bundle encoders.</p>
+</li>
+<li>
+<p><strong><code>wgsl</code></strong> — Enable <code>ShaderModuleSource::Wgsl</code></p>
+</li>
+<li>
+<p><strong><code>fragile-send-sync-non-atomic-wasm</code></strong> — Implement <code>Send</code> and <code>Sync</code> on Wasm, but only if
+atomics are not enabled.</p>
+<p>WebGL/WebGPU objects can not be shared between threads. However, it can be useful to
+artificially mark them as <code>Send</code> and <code>Sync</code> anyways to make it easier to write cross-platform
+code. This is technically <em>very</em> unsafe in a multithreaded environment, but on a wasm binary
+compiled without atomics we know we are definitely not in a multithreaded environment.</p>
+</li>
+</ul>
+<h4 id="backends-passed-through-to-wgpu-hal"><a class="doc-anchor" href="#backends-passed-through-to-wgpu-hal">§</a>Backends, passed through to wgpu-hal</h4>
+<ul>
+<li>
+<p><strong><code>metal</code></strong> — Enable the <code>metal</code> backend.</p>
+</li>
+<li>
+<p><strong><code>vulkan</code></strong> — Enable the <code>vulkan</code> backend.</p>
+</li>
+<li>
+<p><strong><code>gles</code></strong> — Enable the <code>GLES</code> backend.</p>
+<p>This is used for all of GLES, OpenGL, and WebGL.</p>
+</li>
+<li>
+<p><strong><code>dx12</code></strong> — Enable the <code>dx12</code> backend.</p>
+</li>
+</ul>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.naga"><code>pub use <a class="mod" href="../naga/index.html" title="mod naga">naga</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="any_surface/index.html" title="mod wgpu_core::any_surface">any_<wbr>surface</a></dt><dt><a class="mod" href="api/index.html" title="mod wgpu_core::api">api</a></dt><dt><a class="mod" href="binding_model/index.html" title="mod wgpu_core::binding_model">binding_<wbr>model</a></dt><dt><a class="mod" href="command/index.html" title="mod wgpu_core::command">command</a></dt><dt><a class="mod" href="device/index.html" title="mod wgpu_core::device">device</a></dt><dt><a class="mod" href="error/index.html" title="mod wgpu_core::error">error</a></dt><dt><a class="mod" href="global/index.html" title="mod wgpu_core::global">global</a></dt><dt><a class="mod" href="hal_api/index.html" title="mod wgpu_core::hal_api">hal_api</a></dt><dt><a class="mod" href="hub/index.html" title="mod wgpu_core::hub">hub</a></dt><dd>Allocating resource ids, and tracking the resources they refer to.</dd><dt><a class="mod" href="id/index.html" title="mod wgpu_core::id">id</a></dt><dt><a class="mod" href="identity/index.html" title="mod wgpu_core::identity">identity</a></dt><dt><a class="mod" href="instance/index.html" title="mod wgpu_core::instance">instance</a></dt><dt><a class="mod" href="pipeline/index.html" title="mod wgpu_core::pipeline">pipeline</a></dt><dt><a class="mod" href="present/index.html" title="mod wgpu_core::present">present</a></dt><dd>Presentation.</dd><dt><a class="mod" href="registry/index.html" title="mod wgpu_core::registry">registry</a></dt><dt><a class="mod" href="resource/index.html" title="mod wgpu_core::resource">resource</a></dt><dt><a class="mod" href="storage/index.html" title="mod wgpu_core::storage">storage</a></dt><dt><a class="mod" href="validation/index.html" title="mod wgpu_core::validation">validation</a></dt></dl><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><dl class="item-table"><dt><a class="macro" href="macro.gfx_if_dx12_hidden.html" title="macro wgpu_core::gfx_if_dx12_hidden">gfx_<wbr>if_<wbr>dx12_<wbr>hidden</a></dt><dt><a class="macro" href="macro.gfx_if_empty_hidden.html" title="macro wgpu_core::gfx_if_empty_hidden">gfx_<wbr>if_<wbr>empty_<wbr>hidden</a></dt><dt><a class="macro" href="macro.gfx_if_gles_hidden.html" title="macro wgpu_core::gfx_if_gles_hidden">gfx_<wbr>if_<wbr>gles_<wbr>hidden</a></dt><dt><a class="macro" href="macro.gfx_if_metal_hidden.html" title="macro wgpu_core::gfx_if_metal_hidden">gfx_<wbr>if_<wbr>metal_<wbr>hidden</a></dt><dt><a class="macro" href="macro.gfx_if_vulkan_hidden.html" title="macro wgpu_core::gfx_if_vulkan_hidden">gfx_<wbr>if_<wbr>vulkan_<wbr>hidden</a></dt><dt><a class="macro" href="macro.gfx_select.html" title="macro wgpu_core::gfx_select">gfx_<wbr>select</a></dt><dd>Dispatch on an <a href="id/struct.Id.html" title="struct wgpu_core::id::Id"><code>Id</code></a>’s backend to a backend-generic method.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.MAX_BIND_GROUPS.html" title="constant wgpu_core::MAX_BIND_GROUPS">MAX_<wbr>BIND_<wbr>GROUPS</a></dt><dt><a class="constant" href="constant.MAX_COLOR_ATTACHMENTS.html" title="constant wgpu_core::MAX_COLOR_ATTACHMENTS">MAX_<wbr>COLOR_<wbr>ATTACHMENTS</a></dt><dt><a class="constant" href="constant.MAX_VERTEX_BUFFERS.html" title="constant wgpu_core::MAX_VERTEX_BUFFERS">MAX_<wbr>VERTEX_<wbr>BUFFERS</a></dt></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.hal_label.html" title="fn wgpu_core::hal_label">hal_<wbr>label</a></dt></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.Label.html" title="type wgpu_core::Label">Label</a></dt><dt><a class="type" href="type.RawString.html" title="type wgpu_core::RawString">RawString</a></dt></dl></section></div></main></body></html>

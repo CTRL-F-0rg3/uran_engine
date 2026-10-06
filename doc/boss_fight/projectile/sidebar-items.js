@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BULLET_LIFE"],"enum":["Owner"],"struct":["Projectile"]};

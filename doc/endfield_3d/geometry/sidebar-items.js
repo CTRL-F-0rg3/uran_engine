@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["box_mesh","cylinder","pipe","plate","sphere"]};

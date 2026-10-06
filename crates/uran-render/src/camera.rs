@@ -82,18 +82,28 @@ impl Camera2d {
 
     /// Macierz świata -> NDC.
     pub fn view_projection(&self, window_size: Vec2) -> Mat3 {
-        // Kolejność ma znaczenie (macierze kolumnowe: w `A * B * v` najpierw
-        // działa `B`):
+        // Kolejność ma znaczenie i jest **odwrócona** względem opisu
+        // kroków, bo macierze kolumnowe w `A * B * v` najpierw działają `B`:
         //   1. przesuwamy środek widoku do (0,0) -> pozycja kamery
         //   2. obracamy i skalujemy               -> zoom / rotacja
         //   3. skalujemy piksele na NDC [-1, 1]
         //
+        // Czyli matematycznie chcemy `zoom * (p - camera)`, a to wymaga
+        // kolejności `S * R * T`, nie `T * R * S`.
+        //
+        // Podmiana tych dwóch jest bardzo podstępna: przy `T * R * S`
+        // przesunięcie zostaje w **nieprzeskalowanych** jednostkach świata,
+        // więc dla `zoom = 1` wszystko wygląda poprawnie, a przy większym
+        // powiększeniu cała scena zjeżdża o `camera * (zoom - 1)` i kamera
+        // przestaje pokazywać to, co wskazuje. Dlatego pilnujemy tego tu
+        // (i w teście poniżej) zamiast ufać, że „na oko wychodzi".
+        //
         // Uwaga na znak zoomu: `zoom = 2` oznacza 2x powiększenie, czyli
         // przesunięcie świata jest MNOŻONE — widzimy wtedy połowę sceny.
         // To zgadza się z `visible_size() = okno / zoom`.
-        let view = Mat3::from_translation(-self.position)
+        let view = Mat3::from_scale(Vec2::splat(self.zoom))
             * Mat3::from_angle(self.rotation)
-            * Mat3::from_scale(Vec2::splat(self.zoom));
+            * Mat3::from_translation(-self.position);
         let projection = Mat3::from_scale(Vec2::new(2.0 / window_size.x, 2.0 / window_size.y));
         projection * view
     }
@@ -376,5 +386,128 @@ mod tests {
         let mut camera = Camera2d::at(10.0, 20.0);
         camera.clamp_to_bounds(Rect::ZERO, Vec2::new(800.0, 600.0));
         assert_eq!(camera.position, Vec2::new(10.0, 20.0));
+    }
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+
+    /// Środek widoku zawsze ląduje w środku okna — niezależnie od zoomu.
+    ///
+    /// To jest test na kolejność mnożenia w `view_projection`. Przy
+    /// błędnej kolejności (`T * R * S`) przesunięcie nie jest mnożone przez
+    /// zoom, więc środek świata ucieka z ekranu przy `zoom != 1`, a przy
+    /// `zoom = 1` wszystko wygląda dobrze i błąd zostaje niezauważony.
+    #[test]
+    fn camera_center_is_screen_center_at_any_zoom() {
+        let window = Vec2::new(800.0, 600.0);
+        for zoom in [0.25f32, 0.5, 1.0, 1.75, 3.0, 10.0] {
+            let cam = Camera2d::at(1000.0, 700.0).with_zoom(zoom);
+            let screen = cam.world_to_screen(cam.position, window);
+            assert!(
+                (screen.x - window.x * 0.5).abs() < 1e-3,
+                "zoom={zoom}: x środka to {screen:?}"
+            );
+            assert!(
+                (screen.y - window.y * 0.5).abs() < 1e-3,
+                "zoom={zoom}: y środka to {screen:?}"
+            );
+        }
+    }
+
+    /// Świat przesunięty o jednostkę musi przesunąć się o `zoom` pikseli.
+    ///
+    /// Test na to sam błąd, ale bezpośrednio: różnica dwóch punktów nie
+    /// zawiera pozycji kamery, więc da się sprawdzić sam czynnik skalujący.
+    #[test]
+    fn world_offset_is_scaled_by_zoom() {
+        let window = Vec2::new(800.0, 600.0);
+        for zoom in [0.5f32, 1.0, 2.0, 4.0] {
+            let cam = Camera2d::at(1000.0, 700.0).with_zoom(zoom);
+            let a = cam.world_to_screen(Vec2::new(1000.0, 700.0), window);
+            let b = cam.world_to_screen(Vec2::new(1100.0, 700.0), window);
+            assert!(
+                (b.x - a.x - 100.0 * zoom).abs() < 1e-3,
+                "zoom={zoom}: przesunięcie wynosi {} zamiast {}",
+                b.x - a.x,
+                100.0 * zoom
+            );
+        }
+    }
+
+    /// `fit_world` + `world_to_screen` daje cały świat na ekranie.
+    ///
+    /// To sprawdza cały łańcuch naraz: gdy `zoom` jest liczony dla innego
+    /// rozmiaru okna niż ten, w którym renderujemy, świat nie mieści się
+    /// w kadrze i zjeżdża do rogu.
+    #[test]
+    fn fit_world_fills_the_window() {
+        let window = Vec2::new(800.0, 600.0);
+        let world = Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0);
+        let mut cam = Camera2d::new();
+        cam.fit_world(world, window);
+
+        let top_left = cam.world_to_screen(world.min, window);
+        let bottom_right = cam.world_to_screen(world.max, window);
+
+        // Świat szeroki niż okno wypełnia je poziomo i jest przycięty w pionie.
+        assert!((top_left.x).abs() < 1e-2, "lewy krawędź na {top_left:?}");
+        assert!(
+            (bottom_right.x - window.x).abs() < 1e-2,
+            "prawy krawędź na {bottom_right:?}"
+        );
+        // Środek świata jest dokładnie w środku okna.
+        let center = cam.world_to_screen(world.center(), window);
+        assert!((center.x - window.x * 0.5).abs() < 1e-2);
+        assert!((center.y - window.y * 0.5).abs() < 1e-2);
+    }
+
+    /// Świat mniejszy od okna jest wyśrodkowany, a nie przycięty.
+    #[test]
+    fn small_world_is_centered_not_clipped() {
+        let window = Vec2::new(800.0, 600.0);
+        let world = Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        let mut cam = Camera2d::new();
+        cam.fit_world(world, window);
+        cam.clamp_to_bounds(world, window);
+
+        let center = cam.world_to_screen(world.center(), window);
+        assert!((center.x - window.x * 0.5).abs() < 1e-2);
+        assert!((center.y - window.y * 0.5).abs() < 1e-2);
+    }
+
+    /// Ruch w prawo po świecie daje ruch w prawo na ekranie.
+    ///
+    /// Test „na oko" chroniący przed odwróceniem osi (np. `Y w dół`), co
+    /// w 2D top-down jest bardzo łatwo przegapić.
+    #[test]
+    fn screen_and_world_axes_agree() {
+        let window = Vec2::new(800.0, 600.0);
+        let cam = Camera2d::at(500.0, 500.0).with_zoom(1.5);
+        let base = cam.world_to_screen(cam.position, window);
+
+        let right = cam.world_to_screen(cam.position + Vec2::new(10.0, 0.0), window);
+        assert!(right.x > base.x, "świat w prawo = ekran w prawo");
+
+        // oś Y świata idzie w górę, a na ekranie w górę
+        let up = cam.world_to_screen(cam.position + Vec2::new(0.0, 10.0), window);
+        assert!(up.y < base.y, "świat w górę = ekran w górę");
+    }
+
+    /// `screen_to_world` i `world_to_screen` są nawzajem odwrotne.
+    #[test]
+    fn world_screen_roundtrip() {
+        let window = Vec2::new(1024.0, 768.0);
+        let cam = Camera2d::at(640.0, 480.0).with_zoom(1.3);
+        for point in [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(320.0, 240.0),
+            Vec2::new(1024.0, 768.0),
+            Vec2::new(1280.0, 96.0),
+        ] {
+            let back = cam.screen_to_world(cam.world_to_screen(point, window), window);
+            assert!((back - point).length() < 1e-2, "{point:?} -> {back:?}");
+        }
     }
 }

@@ -1,0 +1,1092 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `farm-simulator/src/main.rs`."><title>main.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="farm_simulator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">farm_simulator/</div>main.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Farm Simulator — pole, sadzenie, czekanie, zbiór.
+<a href=#2 id=2 data-nosnippet>2</a>//!
+<a href=#3 id=3 data-nosnippet>3</a>//! # Architektura
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! Gra stoi na sześciu modułach:
+<a href=#6 id=6 data-nosnippet>6</a>//!
+<a href=#7 id=7 data-nosnippet>7</a>//! * [`farm`] — mechanika: siatka działek i pętla sadz → rośnie → zbierz,
+<a href=#8 id=8 data-nosnippet>8</a>//! * [`geometry`] — bryły budowane w kodzie (trawa, roślina, postać),
+<a href=#9 id=9 data-nosnippet>9</a>//! * [`look`] — kierunki w pierwszej osobie (yaw/pitch → wektory),
+<a href=#10 id=10 data-nosnippet>10</a>//! * [`player`] — chód, grawitacja, skok i kolizje,
+<a href=#11 id=11 data-nosnippet>11</a>//! * [`collide`] — świat przeszkód i rozwiązywanie wejść gracza,
+<a href=#12 id=12 data-nosnippet>12</a>//! * [`assets`] — budynki wczytywane z plików `.obj` Quaternius.
+<a href=#13 id=13 data-nosnippet>13</a>//!
+<a href=#14 id=14 data-nosnippet>14</a>//! `main.rs` trzyma tylko warstwę gry: wejście, kamerę, listę
+<a href=#15 id=15 data-nosnippet>15</a>//! rysowania i HUD. Cała logika rozgrywki jest testowana w `farm.rs`,
+<a href=#16 id=16 data-nosnippet>16</a>//! geometria w `geometry.rs`, kierunki w `look.rs`, a fizyka w
+<a href=#17 id=17 data-nosnippet>17</a>//! `player.rs` i `collide.rs` — wszystkie działają bez GPU.
+<a href=#18 id=18 data-nosnippet>18</a>//!
+<a href=#19 id=19 data-nosnippet>19</a>//! Świadomie **bez silnika kolizji** (jak [`junak-rider`]): świat to
+<a href=#20 id=20 data-nosnippet>20</a>//! kilkanaście prostopadłościanów, więc własne AABB jest tańsze o
+<a href=#21 id=21 data-nosnippet>21</a>//! rząd wielkości i łatwiejsze do zrozumienia.
+<a href=#22 id=22 data-nosnippet>22</a>//!
+<a href=#23 id=23 data-nosnippet>23</a>//! # Sterowanie
+<a href=#24 id=24 data-nosnippet>24</a>//!
+<a href=#25 id=25 data-nosnippet>25</a>//! `W/A/S/D` — chodzenie **wzdłuż kierunku patrzenia** (obrót myszą
+<a href=#26 id=26 data-nosnippet>26</a>//! obraca też kierunek chodzenia), `mysz` — obrót kamery,
+<a href=#27 id=27 data-nosnippet>27</a>//! `Spacja` — skok, `E` — sadz lub zbierz, `R` — nowa farma,
+<a href=#28 id=28 data-nosnippet>28</a>//! `F1` — druty kolizji (pomarańczowe bryły świata, błękitny sześcian
+<a href=#29 id=29 data-nosnippet>29</a>//! gracza), `Esc` — wyjście.
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">mod </span>assets;
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">mod </span>collide;
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">mod </span>farm;
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">mod </span>geometry;
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">mod </span>look;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">mod </span>player;
+<a href=#37 id=37 data-nosnippet>37</a>
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>std::sync::{Arc, Mutex};
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span>uran_engine::prelude::<span class="kw-2">*</span>;
+<a href=#41 id=41 data-nosnippet>41</a><span class="kw">use </span>uran_math::{Mat4, Vec3};
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>uran_render3d::{DrawCmd, MaterialId, MeshId, Renderer3d, model_matrix};
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span><span class="kw">crate</span>::farm::{Farm, TILE, tile_at, tile_center};
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span><span class="kw">crate</span>::geometry::palette;
+<a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span><span class="kw">crate</span>::look::{clamp_pitch, forward, move_dir, up};
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a><span class="doccomment">/// Rozmiar świata w metrach. Kwadratowy, bo mgła i kadr cienia
+<a href=#49 id=49 data-nosnippet>49</a>/// zakładają się na jeden wymiar — przy prostokącie trzeba by liczyć
+<a href=#50 id=50 data-nosnippet>50</a>/// dwa różne promienie.
+<a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">const </span>WORLD: f32 = <span class="number">90.0</span>;
+<a href=#52 id=52 data-nosnippet>52</a>
+<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// Wysokość oka nad ziemią (typowa dla postaci ~1,7 m).
+<a href=#54 id=54 data-nosnippet>54</a></span><span class="kw">const </span>EYE: f32 = <span class="number">1.66</span>;
+<a href=#55 id=55 data-nosnippet>55</a><span class="doccomment">/// Największa odległość gracza od środka mapy.
+<a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">const </span>PLAY_LIMIT: f32 = WORLD * <span class="number">0.5 </span>- <span class="number">2.0</span>;
+<a href=#57 id=57 data-nosnippet>57</a><span class="doccomment">/// Czułość myszy w radianach na piksel.
+<a href=#58 id=58 data-nosnippet>58</a>///
+<a href=#59 id=59 data-nosnippet>59</a>/// 0,0035 rad/px ≈ 0,2°/px, czyli pełne 360° wymaga ~1800 px ruchu
+<a href=#60 id=60 data-nosnippet>60</a>/// w poziomie. Poprzednie 0,0022 było zbyt „lepkie" w pierwszej
+<a href=#61 id=61 data-nosnippet>61</a>/// osobie — obrót głowy przy 75° FOV musi być szybki, inaczej
+<a href=#62 id=62 data-nosnippet>62</a>/// przeciwnik (albo krawędź pola) ucieka z kadru, zanim gracz
+<a href=#63 id=63 data-nosnippet>63</a>/// zdąży zareagować. Przy tej wartości krótki ruch nadgarstka
+<a href=#64 id=64 data-nosnippet>64</a>/// daje pełny obrót o 90°, a ramiona nadal kontrolują drobne
+<a href=#65 id=65 data-nosnippet>65</a>/// korekty.
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">const </span>LOOK_SENS: f32 = <span class="number">0.0035</span>;
+<a href=#67 id=67 data-nosnippet>67</a>
+<a href=#68 id=68 data-nosnippet>68</a><span class="doccomment">/// Kierunek startowego patrzenia: `yaw = PI` = na `-Z`.
+<a href=#69 id=69 data-nosnippet>69</a>///
+<a href=#70 id=70 data-nosnippet>70</a>/// Gracz startuje **przed** polem (patrz [`Game::new`]), czyli po
+<a href=#71 id=71 data-nosnippet>71</a>/// stronie `+Z` osi, a samo pole leży w środku świata, czyli w `0`.
+<a href=#72 id=72 data-nosnippet>72</a>/// Żeby widzieć pole, trzeba patrzeć na `-Z`. `yaw = 0` patrzyłoby
+<a href=#73 id=73 data-nosnippet>73</a>/// w przeciwną stronę, na pustą trawę — stąd stała zamiast `0.0`.
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">const </span>START_YAW: f32 = std::f32::consts::PI;
+<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// Startowy pitch: lekko w dół, na pole przed sobą.
+<a href=#76 id=76 data-nosnippet>76</a>///
+<a href=#77 id=77 data-nosnippet>77</a>/// -0,22 rad (≈12,6°) to tyle, żeby ziemia zajmowała dolne ~2/3
+<a href=#78 id=78 data-nosnippet>78</a>/// kadru, a horyzont i budynki górne 1/3. Zerowy pitch kazałby
+<a href=#79 id=79 data-nosnippet>79</a>/// patrzeć w niebo i pole ledwo by było widać.
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">const </span>START_PITCH: f32 = -<span class="number">0.22</span>;
+<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// Odległość startu od **płotu**, nie od pola.
+<a href=#82 id=82 data-nosnippet>82</a>///
+<a href=#83 id=83 data-nosnippet>83</a>/// Płot stoi na `fd/2 + 0.5` i ma 1,1 m wysokości. Oko gracza jest na
+<a href=#84 id=84 data-nosnippet>84</a>/// wysokości 1,66 m, więc stojąc tuż za płotem, gracz patrzyłby
+<a href=#85 id=85 data-nosnippet>85</a>/// przez jego szczebelnicę — dolna połowa kadru to były drewno.
+<a href=#86 id=86 data-nosnippet>86</a>/// 7 m odsuwa gracza na tyle, żeby płot znalazł się u dołu ekranu
+<a href=#87 id=87 data-nosnippet>87</a>/// jako ramka, a nie jako przeszkoda.
+<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">const </span>START_OFFSET: f32 = <span class="number">7.0</span>;
+<a href=#89 id=89 data-nosnippet>89</a>
+<a href=#90 id=90 data-nosnippet>90</a><span class="doccomment">/// Najwyższe położenie stóp gracza (m) — sufit dla skoku.
+<a href=#91 id=91 data-nosnippet>91</a>///
+<a href=#92 id=92 data-nosnippet>92</a>/// Zabezpieczenie przed sytuacją, w której kamera ucieka w górę: gdyby
+<a href=#93 id=93 data-nosnippet>93</a>/// kolidator kiedyś wypchnął gracza w osi Y (dziś tego nie robi —
+<a href=#94 id=94 data-nosnippet>94</a>/// [`collide::World`] rozwiązuje tylko X i Z), pozycja stóp i tak nie
+<a href=#95 id=95 data-nosnippet>95</a>/// przekroczyłaby tej wartości. Skok osiąga ~1,4 m, więc zapas jest
+<a href=#96 id=96 data-nosnippet>96</a>/// duży, a błąd w kodzie nie objawiłby się jako „latanie po mapie".
+<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">const </span>MAX_FOOT_Y: f32 = <span class="number">6.0</span>;
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a><span class="doccomment">/// Budynki na mapie: plik, pozycja środka, obrót i obrys w metrach.
+<a href=#100 id=100 data-nosnippet>100</a>///
+<a href=#101 id=101 data-nosnippet>101</a>/// Jedno źródło prawdy dla rysowania ([`build_props`]) i dla kolizji
+<a href=#102 id=102 data-nosnippet>102</a>/// ([`build_collision_world`]). Osobne listy zaprosiłyby do błędu:
+<a href=#103 id=103 data-nosnippet>103</a>/// przesunięcie stodoła w rysowaniu dałoby graczowi wejście w jego
+<a href=#104 id=104 data-nosnippet>104</a>/// środek.
+<a href=#105 id=105 data-nosnippet>105</a>///
+<a href=#106 id=106 data-nosnippet>106</a>/// Obrys (`width`/`depth`) to **naturalne** wymiary modelu, a nie AABB
+<a href=#107 id=107 data-nosnippet>107</a>/// po obrocie — to drugie liczy już [`build_collision_world`]. Rozmiar
+<a href=#108 id=108 data-nosnippet>108</a>/// podajemy z plików `.obj` (Quaternius, oś Y): stodoło 7,7 × 9,1 m,
+<a href=#109 id=109 data-nosnippet>109</a>/// silos 3,7 × 3,5 m, młyn 4,4 × 4,4 m, studnia 1,4 × 1,4 m.
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">const </span>PROP_PLACES: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, Vec3, f32, f32, f32, f32)] = <span class="kw-2">&amp;</span>[
+<a href=#111 id=111 data-nosnippet>111</a>    (
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="string">"BigBarn"</span>,
+<a href=#113 id=113 data-nosnippet>113</a>        Vec3::new(-<span class="number">14.0</span>, <span class="number">0.0</span>, -<span class="number">11.0</span>),
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="number">0.35</span>,
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="number">7.7</span>,
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="number">9.1</span>,
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="number">7.89</span>,
+<a href=#118 id=118 data-nosnippet>118</a>    ),
+<a href=#119 id=119 data-nosnippet>119</a>    (<span class="string">"Silo"</span>, Vec3::new(-<span class="number">6.0</span>, <span class="number">0.0</span>, -<span class="number">14.5</span>), <span class="number">0.0</span>, <span class="number">3.7</span>, <span class="number">3.5</span>, <span class="number">9.07</span>),
+<a href=#120 id=120 data-nosnippet>120</a>    (
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="string">"Windmill"</span>,
+<a href=#122 id=122 data-nosnippet>122</a>        Vec3::new(<span class="number">14.0</span>, <span class="number">0.0</span>, -<span class="number">11.0</span>),
+<a href=#123 id=123 data-nosnippet>123</a>        -<span class="number">0.45</span>,
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="number">4.4</span>,
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="number">4.4</span>,
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="number">11.20</span>,
+<a href=#127 id=127 data-nosnippet>127</a>    ),
+<a href=#128 id=128 data-nosnippet>128</a>    (<span class="string">"Well"</span>, Vec3::new(<span class="number">4.5</span>, <span class="number">0.0</span>, <span class="number">8.0</span>), <span class="number">0.8</span>, <span class="number">1.4</span>, <span class="number">1.4</span>, <span class="number">2.15</span>),
+<a href=#129 id=129 data-nosnippet>129</a>];
+<a href=#130 id=130 data-nosnippet>130</a>
+<a href=#131 id=131 data-nosnippet>131</a><span class="doccomment">/// Jedna część wczytanego budynku: lista (siatka, materiał).
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">struct </span>Prop {
+<a href=#133 id=133 data-nosnippet>133</a>    parts: Vec&lt;(MeshId, MaterialId)&gt;,
+<a href=#134 id=134 data-nosnippet>134</a>    pos: Vec3,
+<a href=#135 id=135 data-nosnippet>135</a>    yaw: f32,
+<a href=#136 id=136 data-nosnippet>136</a>}
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a><span class="doccomment">/// Siatki zarejestrowane raz przy starcie.
+<a href=#139 id=139 data-nosnippet>139</a></span><span class="kw">struct </span>Meshes {
+<a href=#140 id=140 data-nosnippet>140</a>    ground: MeshId,
+<a href=#141 id=141 data-nosnippet>141</a>    soil: MeshId,
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="doccomment">/// Roślina w trzech fazach: sadzonka, w połowie, dojrzała.
+<a href=#143 id=143 data-nosnippet>143</a>    </span>plant: [MeshId; <span class="number">3</span>],
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// Budynki i płot wokół farmy.
+<a href=#145 id=145 data-nosnippet>145</a>    </span>buildings: Vec&lt;Prop&gt;,
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// Kubit 1×1×1 m wokół środka — drunek kolidatora. Rysujemy go
+<a href=#147 id=147 data-nosnippet>147</a>    /// skalą per bryła, więc **jedna** siatka obsługuje wszystkie
+<a href=#148 id=148 data-nosnippet>148</a>    /// kolidatory, niezależnie od ich rozmiaru.
+<a href=#149 id=149 data-nosnippet>149</a>    </span>collider: MeshId,
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// Sześcian gracza — pokazuje, gdzie kończy się ciało przy
+<a href=#151 id=151 data-nosnippet>151</a>    /// sprawdzaniu kolizji.
+<a href=#152 id=152 data-nosnippet>152</a>    </span>player_box: MeshId,
+<a href=#153 id=153 data-nosnippet>153</a>}
+<a href=#154 id=154 data-nosnippet>154</a>
+<a href=#155 id=155 data-nosnippet>155</a><span class="doccomment">/// Stan gry dzielony między systemami.
+<a href=#156 id=156 data-nosnippet>156</a></span><span class="kw">struct </span>Game {
+<a href=#157 id=157 data-nosnippet>157</a>    scene: Arc&lt;Mutex&lt;Renderer3d&gt;&gt;,
+<a href=#158 id=158 data-nosnippet>158</a>    meshes: Meshes,
+<a href=#159 id=159 data-nosnippet>159</a>    farm: Farm,
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Świat przeszkód: budynki, płot i granica mapy.
+<a href=#161 id=161 data-nosnippet>161</a>    </span>world: collide::World,
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// Chód, grawitacja i skok.
+<a href=#163 id=163 data-nosnippet>163</a>    </span>player: player::Player,
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Parametry chodu i skoku (prędkość, grawitacja, wysokość skoku).
+<a href=#165 id=165 data-nosnippet>165</a>    </span>player_cfg: player::PlayerConfig,
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Pozycja gracza na płaszczyźnie.
+<a href=#167 id=167 data-nosnippet>167</a>    </span>player_pos: Vec3,
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Kierunek patrzenia: obrót wokół Y (poziom) i X (pion).
+<a href=#169 id=169 data-nosnippet>169</a>    ///
+<a href=#170 id=170 data-nosnippet>170</a>    /// Trzymamy kąty, a nie wektor, bo obrót myszą to dodawanie do
+<a href=#171 id=171 data-nosnippet>171</a>    /// kąta, a nie mnożenie wektora. `pitch` jest zawsze przycięty
+<a href=#172 id=172 data-nosnippet>172</a>    /// przez [`clamp_pitch`], więc nigdy nie wychodzi poza pion.
+<a href=#173 id=173 data-nosnippet>173</a>    </span>yaw: f32,
+<a href=#174 id=174 data-nosnippet>174</a>    pitch: f32,
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Skąd patrzymy: wektor obliczany z `yaw`/`pitch` razem z
+<a href=#176 id=176 data-nosnippet>176</a>    /// pozycją oka. Osobno trzymany, bo `build()` (rysowanie) ma
+<a href=#177 id=177 data-nosnippet>177</a>    /// tylko odczyt, a `update()` go oblicza.
+<a href=#178 id=178 data-nosnippet>178</a>    </span>eye: Vec3,
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Kierunek patrzenia, także wektor — do rysowania celownika
+<a href=#180 id=180 data-nosnippet>180</a>    /// i do obliczania, gdzie gracz patrzy przy `E`.
+<a href=#181 id=181 data-nosnippet>181</a>    </span>view_dir: Vec3,
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="doccomment">/// Faza kołysania kroku (radiany). Rośnie z **przebytą
+<a href=#183 id=183 data-nosnippet>183</a>    /// drogą**, nie z czasem, więc stojący gracz nie kołysze się,
+<a href=#184 id=184 data-nosnippet>184</a>    /// a chodzący zawsze ma ten sam rytm niezależnie od `dt`.
+<a href=#185 id=185 data-nosnippet>185</a>    </span>walking: f32,
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="doccomment">/// Wygładzona prędkość chodu 0..1 — do rozmycia kołysania przy
+<a href=#187 id=187 data-nosnippet>187</a>    /// ruszaniu i zatrzymywaniu. Bez tego oko szarpnęłoby przy każdym
+<a href=#188 id=188 data-nosnippet>188</a>    /// naciśnięciu i puszczeniu klawisza.
+<a href=#189 id=189 data-nosnippet>189</a>    </span>walk_blend: f32,
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="doccomment">/// Czas świata (mgła i animacje).
+<a href=#191 id=191 data-nosnippet>191</a>    </span>time: f32,
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="doccomment">/// Czy wszystkie działki są dojrzałe.
+<a href=#193 id=193 data-nosnippet>193</a>    </span>won: bool,
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// Czy rysować druty kolizji (`F1`).
+<a href=#195 id=195 data-nosnippet>195</a>    </span>show_colliders: bool,
+<a href=#196 id=196 data-nosnippet>196</a>    font: <span class="prelude-ty">Option</span>&lt;Font&gt;,
+<a href=#197 id=197 data-nosnippet>197</a>}
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a><span class="kw">impl </span>Game {
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Buduje świat i renderer 3D na gotowym urządzeniu.
+<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">fn </span>new(gpu: <span class="kw-2">&amp;</span>uran_render::GpuContext, format: wgpu::TextureFormat, samples: u32) -&gt; <span class="self">Self </span>{
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span><span class="kw-2">mut </span>scene = Renderer3d::new(gpu, format, samples);
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="comment">// Niebo: jasny błękit. Kolor podajemy w sRGB, bo shader sceny
+<a href=#204 id=204 data-nosnippet>204</a>        // miesza z nim mgłę i musi zgadzać się z gradientem nieba.
+<a href=#205 id=205 data-nosnippet>205</a>        </span>scene.set_clear_color([<span class="number">0.58</span>, <span class="number">0.74</span>, <span class="number">0.90</span>, <span class="number">1.0</span>]);
+<a href=#206 id=206 data-nosnippet>206</a>        {
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="kw">let </span>l = scene.lighting_mut();
+<a href=#208 id=208 data-nosnippet>208</a>            <span class="comment">// Słońce ~48° nad horyzontem i wyraźnie z boku. Niski kąt
+<a href=#209 id=209 data-nosnippet>209</a>            // daje długie cienie, które pokazują, gdzie jest pole
+<a href=#210 id=210 data-nosnippet>210</a>            // uprawne, a gdzie zwykła trawa.
+<a href=#211 id=211 data-nosnippet>211</a>            </span>l.light_dir = Vec3::new(<span class="number">0.42</span>, <span class="number">0.66</span>, <span class="number">0.62</span>).normalize();
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="comment">// Ciepłe, lekko złotawe — popołudniowe słońce nad polem.
+<a href=#213 id=213 data-nosnippet>213</a>            </span>l.light_color = [<span class="number">1.0</span>, <span class="number">0.95</span>, <span class="number">0.84</span>];
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="comment">// 0.36/0.45/0.60 → 0.13/0.16/0.21.
+<a href=#215 id=215 data-nosnippet>215</a>            //
+<a href=#216 id=216 data-nosnippet>216</a>            // Stara wartość była 3-4× większa od natężenia słońca w
+<a href=#217 id=217 data-nosnippet>217</a>            // sensie proporcji i **zalewała każdą powierzchnię
+<a href=#218 id=218 data-nosnippet>218</a>            // niebieskim rozświetleniem**: na zrzucie widać było to jako
+<a href=#219 id=219 data-nosnippet>219</a>            // trawa w jednolitym, „plastikowym" odcieniu i budynki
+<a href=#220 id=220 data-nosnippet>220</a>            // przesunięte w fiolet. Przy słońcu 4.0 i takim ambientcie
+<a href=#221 id=221 data-nosnippet>221</a>            // kadr nie miał żadnego kontrastu — cień i strona na słońcu
+<a href=#222 id=222 data-nosnippet>222</a>            // wyglądały tak samo, tylko inaczej zabarwione.
+<a href=#223 id=223 data-nosnippet>223</a>            //
+<a href=#224 id=224 data-nosnippet>224</a>            // 0.13/0.16/0.21 nadal „niesie niebo" (nie zerowe), więc
+<a href=#225 id=225 data-nosnippet>225</a>            // cień jest chłodny i czytelny, ale realnie ciemniejszy
+<a href=#226 id=226 data-nosnippet>226</a>            // od strony naświetlonej. Zgodne z globalnym domyślnym
+<a href=#227 id=227 data-nosnippet>227</a>            // `Lighting::default()`, które ma dokładnie te wartości.
+<a href=#228 id=228 data-nosnippet>228</a>            </span>l.ambient = [<span class="number">0.13</span>, <span class="number">0.16</span>, <span class="number">0.21</span>];
+<a href=#229 id=229 data-nosnippet>229</a>        }
+<a href=#230 id=230 data-nosnippet>230</a>        {
+<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">let </span>cam = scene.camera_mut();
+<a href=#232 id=232 data-nosnippet>232</a>            <span class="comment">// 75°: pierwsza osoba potrzebuje szerszego pola widzenia niż
+<a href=#233 id=233 data-nosnippet>233</a>            // kamera trzecioosobowa. Przy 60° budynki przy krawędziach
+<a href=#234 id=234 data-nosnippet>234</a>            // kadru były mocno zniekształcone, a horyzont ucinał się
+<a href=#235 id=235 data-nosnippet>235</a>            // zbyt blisko — przy skręcie myszą było „wąsko".
+<a href=#236 id=236 data-nosnippet>236</a>            </span>cam.fov_y = <span class="number">75.0_f32</span>.to_radians();
+<a href=#237 id=237 data-nosnippet>237</a>            cam.near = <span class="number">0.1</span>;
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="comment">// Dalej płaszczyzna: przy oknie 90 m i budynku 11 m wysokości
+<a href=#239 id=239 data-nosnippet>239</a>            // 200 m w zupełności wystarcza, a mniejsza wartość pozwala
+<a href=#240 id=240 data-nosnippet>240</a>            // precyzyjniej dzielić głębokość w buforze cieni.
+<a href=#241 id=241 data-nosnippet>241</a>            </span>cam.far = <span class="number">200.0</span>;
+<a href=#242 id=242 data-nosnippet>242</a>        }
+<a href=#243 id=243 data-nosnippet>243</a>
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="comment">// --- teren i pole ---
+<a href=#245 id=245 data-nosnippet>245</a>        </span><span class="kw">let </span>ground = geometry::ground(WORLD, <span class="number">6.0</span>);
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>ground = scene.add_mesh(gpu, <span class="kw-2">&amp;</span>ground, <span class="string">"trawa"</span>);
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="comment">// Gleba: jedna płyta pod całym polem. Działki różnią się tym,
+<a href=#249 id=249 data-nosnippet>249</a>        // co na nich rośnie, a nie kolorem gruntu — inaczej zamiast
+<a href=#250 id=250 data-nosnippet>250</a>        // uprawy widać by szachownicę.
+<a href=#251 id=251 data-nosnippet>251</a>        </span><span class="kw">let </span>fw = farm::FIELD_W <span class="kw">as </span>f32 * TILE;
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>fd = farm::FIELD_D <span class="kw">as </span>f32 * TILE;
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="comment">// Podnosimy glebę o 2 cm nad trawę: inaczej z poziomu kamery
+<a href=#254 id=254 data-nosnippet>254</a>        // obie powierzchnie zlewają się w jedną płaszczyznę.
+<a href=#255 id=255 data-nosnippet>255</a>        </span><span class="kw">let </span>soil = scene.add_mesh(
+<a href=#256 id=256 data-nosnippet>256</a>            gpu,
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw-2">&amp;</span>geometry::quad_y(<span class="number">0.0</span>, <span class="number">0.0</span>, fw * <span class="number">0.5</span>, <span class="number">0.02</span>, palette::SOIL),
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="string">"gleba"</span>,
+<a href=#259 id=259 data-nosnippet>259</a>        );
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="comment">// --- roślina w trzech fazach wzrostu ---
+<a href=#262 id=262 data-nosnippet>262</a>        </span><span class="kw">let </span>plant = [
+<a href=#263 id=263 data-nosnippet>263</a>            scene.add_mesh(gpu, <span class="kw-2">&amp;</span>geometry::plant(<span class="number">0.12</span>), <span class="string">"roslina 0"</span>),
+<a href=#264 id=264 data-nosnippet>264</a>            scene.add_mesh(gpu, <span class="kw-2">&amp;</span>geometry::plant(<span class="number">0.55</span>), <span class="string">"roslina 1"</span>),
+<a href=#265 id=265 data-nosnippet>265</a>            scene.add_mesh(gpu, <span class="kw-2">&amp;</span>geometry::plant(<span class="number">1.0</span>), <span class="string">"roslina 2"</span>),
+<a href=#266 id=266 data-nosnippet>266</a>        ];
+<a href=#267 id=267 data-nosnippet>267</a>
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="comment">// --- druty kolizji (F1) ---
+<a href=#269 id=269 data-nosnippet>269</a>        //
+<a href=#270 id=270 data-nosnippet>270</a>        // **Kubit jednostkowy** wokół środka: skalą do `half * 2`
+<a href=#271 id=271 data-nosnippet>271</a>        // dajemy dowolny rozmiar, więc jedna siatka obsługuje wszystkie
+<a href=#272 id=272 data-nosnippet>272</a>        // kolidatory. Grubość drutu jest w metrach i nie skaluje się —
+<a href=#273 id=273 data-nosnippet>273</a>        // przy skali kolidatora `half` w metrach, podział trójek jest
+<a href=#274 id=274 data-nosnippet>274</a>        // mniej mylący niż ułamek proporcji.
+<a href=#275 id=275 data-nosnippet>275</a>        //
+<a href=#276 id=276 data-nosnippet>276</a>        // Kolidator mnożymy przez `2 * half` w [`build_draw_list`],
+<a href=#277 id=277 data-nosnippet>277</a>        // a stąd wewnątrz siatki zostaje grubość 6 cm na krawędzi kubita
+<a href=#278 id=278 data-nosnippet>278</a>        // jednostkowego — po skalowaniu daje 3 cm na ścianie płotu
+<a href=#279 id=279 data-nosnippet>279</a>        // i kilkanaście centymetrów na stodole.
+<a href=#280 id=280 data-nosnippet>280</a>        </span><span class="kw">let </span>collider = scene.add_mesh(
+<a href=#281 id=281 data-nosnippet>281</a>            gpu,
+<a href=#282 id=282 data-nosnippet>282</a>            <span class="kw-2">&amp;</span>geometry::collider_box(
+<a href=#283 id=283 data-nosnippet>283</a>                Vec3::ZERO,
+<a href=#284 id=284 data-nosnippet>284</a>                Vec3::new(<span class="number">0.5</span>, <span class="number">0.5</span>, <span class="number">0.5</span>),
+<a href=#285 id=285 data-nosnippet>285</a>                geometry::COLLIDER,
+<a href=#286 id=286 data-nosnippet>286</a>                <span class="number">0.03</span>,
+<a href=#287 id=287 data-nosnippet>287</a>            ),
+<a href=#288 id=288 data-nosnippet>288</a>            <span class="string">"kolidator"</span>,
+<a href=#289 id=289 data-nosnippet>289</a>        );
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>player_box = scene.add_mesh(
+<a href=#291 id=291 data-nosnippet>291</a>            gpu,
+<a href=#292 id=292 data-nosnippet>292</a>            <span class="kw-2">&amp;</span>geometry::collider_box(
+<a href=#293 id=293 data-nosnippet>293</a>                Vec3::ZERO,
+<a href=#294 id=294 data-nosnippet>294</a>                Vec3::new(<span class="number">0.5</span>, <span class="number">0.5</span>, <span class="number">0.5</span>),
+<a href=#295 id=295 data-nosnippet>295</a>                geometry::PLAYER_BOX,
+<a href=#296 id=296 data-nosnippet>296</a>                <span class="number">0.06</span>,
+<a href=#297 id=297 data-nosnippet>297</a>            ),
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="string">"gracz-box"</span>,
+<a href=#299 id=299 data-nosnippet>299</a>        );
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="comment">// Siatki postaci nie ma: w pierwszej osobie oko gracza siedzi
+<a href=#302 id=302 data-nosnippet>302</a>        // wewnątrz jego głowy, więc narysowana postać zasłoniłaby cały
+<a href=#303 id=303 data-nosnippet>303</a>        // ekran. Zamiast niej HUD rysuje celownik.
+<a href=#304 id=304 data-nosnippet>304</a>        </span><span class="kw">let _ </span>= <span class="kw-2">&amp;</span>geometry::player;
+<a href=#305 id=305 data-nosnippet>305</a>
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="comment">// --- płot i budynki wokół farmy ---
+<a href=#307 id=307 data-nosnippet>307</a>        </span><span class="kw">let </span>buildings = build_props(<span class="kw-2">&amp;mut </span>scene, gpu);
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">println!</span>(
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="string">"🌾  farma: {}×{} działek, {}×{:.0} m, {}/{} budynków"</span>,
+<a href=#311 id=311 data-nosnippet>311</a>            farm::FIELD_W,
+<a href=#312 id=312 data-nosnippet>312</a>            farm::FIELD_D,
+<a href=#313 id=313 data-nosnippet>313</a>            fw,
+<a href=#314 id=314 data-nosnippet>314</a>            fd,
+<a href=#315 id=315 data-nosnippet>315</a>            assets::available_buildings(),
+<a href=#316 id=316 data-nosnippet>316</a>            assets::BUILDINGS.len()
+<a href=#317 id=317 data-nosnippet>317</a>        );
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="self">Self </span>{
+<a href=#320 id=320 data-nosnippet>320</a>            scene: Arc::new(Mutex::new(scene)),
+<a href=#321 id=321 data-nosnippet>321</a>            meshes: Meshes {
+<a href=#322 id=322 data-nosnippet>322</a>                ground,
+<a href=#323 id=323 data-nosnippet>323</a>                soil,
+<a href=#324 id=324 data-nosnippet>324</a>                plant,
+<a href=#325 id=325 data-nosnippet>325</a>                buildings,
+<a href=#326 id=326 data-nosnippet>326</a>                collider,
+<a href=#327 id=327 data-nosnippet>327</a>                player_box,
+<a href=#328 id=328 data-nosnippet>328</a>            },
+<a href=#329 id=329 data-nosnippet>329</a>            farm: Farm::new(),
+<a href=#330 id=330 data-nosnippet>330</a>            <span class="comment">// Startujemy przed polem i patrzymy **na** pole: pozycja
+<a href=#331 id=331 data-nosnippet>331</a>            // jest po stronie `+Z`, więc kierunek patrzenia to `-Z`
+<a href=#332 id=332 data-nosnippet>332</a>            // (`START_YAW`). `W` od razu prowadzi na działki.
+<a href=#333 id=333 data-nosnippet>333</a>            </span>player: {
+<a href=#334 id=334 data-nosnippet>334</a>                <span class="kw">let </span><span class="kw-2">mut </span>p = player::Player::default();
+<a href=#335 id=335 data-nosnippet>335</a>                p.teleport(<span class="number">0.0</span>, farm::FIELD_D <span class="kw">as </span>f32 * TILE * <span class="number">0.5 </span>+ START_OFFSET);
+<a href=#336 id=336 data-nosnippet>336</a>                p
+<a href=#337 id=337 data-nosnippet>337</a>            },
+<a href=#338 id=338 data-nosnippet>338</a>            world: build_collision_world(),
+<a href=#339 id=339 data-nosnippet>339</a>            player_cfg: player::PlayerConfig::default(),
+<a href=#340 id=340 data-nosnippet>340</a>            player_pos: Vec3::new(<span class="number">0.0</span>, <span class="number">0.0</span>, fd * <span class="number">0.5 </span>+ START_OFFSET),
+<a href=#341 id=341 data-nosnippet>341</a>            yaw: START_YAW,
+<a href=#342 id=342 data-nosnippet>342</a>            pitch: START_PITCH,
+<a href=#343 id=343 data-nosnippet>343</a>            eye: Vec3::new(<span class="number">0.0</span>, EYE, fd * <span class="number">0.5 </span>+ START_OFFSET),
+<a href=#344 id=344 data-nosnippet>344</a>            view_dir: Vec3::new(<span class="number">0.0</span>, <span class="number">0.0</span>, -<span class="number">1.0</span>),
+<a href=#345 id=345 data-nosnippet>345</a>            walking: <span class="number">0.0</span>,
+<a href=#346 id=346 data-nosnippet>346</a>            walk_blend: <span class="number">0.0</span>,
+<a href=#347 id=347 data-nosnippet>347</a>            time: <span class="number">0.0</span>,
+<a href=#348 id=348 data-nosnippet>348</a>            won: <span class="bool-val">false</span>,
+<a href=#349 id=349 data-nosnippet>349</a>            show_colliders: <span class="bool-val">false</span>,
+<a href=#350 id=350 data-nosnippet>350</a>            font: <span class="prelude-val">None</span>,
+<a href=#351 id=351 data-nosnippet>351</a>        }
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>}
+<a href=#354 id=354 data-nosnippet>354</a>
+<a href=#355 id=355 data-nosnippet>355</a><span class="doccomment">/// Rejestruje wczytany model: część na część, materiał na materiał.
+<a href=#356 id=356 data-nosnippet>356</a>///
+<a href=#357 id=357 data-nosnippet>357</a>/// Materiały deduplikujemy po nazwie: ten sam kolor z `.mtl` występuje
+<a href=#358 id=358 data-nosnippet>358</a>/// w kilku częściach modelu, a każda kopia to osobny bind group
+<a href=#359 id=359 data-nosnippet>359</a>/// i osobne tekstury na karcie.
+<a href=#360 id=360 data-nosnippet>360</a></span><span class="kw">fn </span>register_model(
+<a href=#361 id=361 data-nosnippet>361</a>    scene: <span class="kw-2">&amp;mut </span>Renderer3d,
+<a href=#362 id=362 data-nosnippet>362</a>    gpu: <span class="kw-2">&amp;</span>uran_render::GpuContext,
+<a href=#363 id=363 data-nosnippet>363</a>    model: uran_render3d::ImportedModel,
+<a href=#364 id=364 data-nosnippet>364</a>) -&gt; Vec&lt;(MeshId, MaterialId)&gt; {
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen: Vec&lt;(String, MaterialId)&gt; = Vec::new();
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::with_capacity(model.parts.len());
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">for </span>part <span class="kw">in </span><span class="kw-2">&amp;</span>model.parts {
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>mat = <span class="kw">match </span>seen.iter().find(|(n, <span class="kw">_</span>)| <span class="kw-2">*</span>n == part.material.name) {
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="prelude-val">Some</span>((<span class="kw">_</span>, id)) =&gt; <span class="kw-2">*</span>id,
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#371 id=371 data-nosnippet>371</a>                <span class="kw">let </span>id = scene.add_material(gpu, <span class="kw-2">&amp;</span>part.material);
+<a href=#372 id=372 data-nosnippet>372</a>                seen.push((part.material.name.clone(), id));
+<a href=#373 id=373 data-nosnippet>373</a>                id
+<a href=#374 id=374 data-nosnippet>374</a>            }
+<a href=#375 id=375 data-nosnippet>375</a>        };
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>id = scene.add_mesh(gpu, <span class="kw-2">&amp;</span>part.mesh, <span class="kw-2">&amp;</span>part.name);
+<a href=#377 id=377 data-nosnippet>377</a>        out.push((id, mat));
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>    out
+<a href=#380 id=380 data-nosnippet>380</a>}
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="doccomment">/// Rozstawienie płotu i budynków wokół pola.
+<a href=#383 id=383 data-nosnippet>383</a>///
+<a href=#384 id=384 data-nosnippet>384</a>/// Pozycje dobrane tak, żeby z dowolnego miejsca pola widać było
+<a href=#385 id=385 data-nosnippet>385</a>/// co najmniej jeden budynek — puste niebo wygląda jak brakujący świat,
+<a href=#386 id=386 data-nosnippet>386</a>/// a nie łąka otoczona lasem.
+<a href=#387 id=387 data-nosnippet>387</a></span><span class="kw">fn </span>build_props(scene: <span class="kw-2">&amp;mut </span>Renderer3d, gpu: <span class="kw-2">&amp;</span>uran_render::GpuContext) -&gt; Vec&lt;Prop&gt; {
+<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">let </span><span class="kw-2">mut </span>out: Vec&lt;Prop&gt; = Vec::new();
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">let </span>fw = farm::FIELD_W <span class="kw">as </span>f32 * TILE;
+<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">let </span>fd = farm::FIELD_D <span class="kw">as </span>f32 * TILE;
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="comment">// --- płot wokół pola ---
+<a href=#393 id=393 data-nosnippet>393</a>    //
+<a href=#394 id=394 data-nosnippet>394</a>    // Segment `Fence.obj` ma 5,89 m długości przy naturalnej skali
+<a href=#395 id=395 data-nosnippet>395</a>    // (1,10 m wysokości), więc rozstawiamy go co ~5,5 m z lekkim
+<a href=#396 id=396 data-nosnippet>396</a>    // zakładką. Wcześniejszy krok 2,2 m kładł segmenty JEDEN NA
+<a href=#397 id=397 data-nosnippet>397</a>    // DRUGIM — na zrzucie widać by „kupę belek" zamiast płotu.
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(model) = assets::load_building(<span class="string">"Fence"</span>, assets::FENCE_HEIGHT) {
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>fence = register_model(scene, gpu, model);
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="comment">// 5,5 m: tyle ma segment pomniejszony o zakładkę, żeby słupki
+<a href=#401 id=401 data-nosnippet>401</a>        // stykały się wizualnie bez szczeliny.
+<a href=#402 id=402 data-nosnippet>402</a>        </span><span class="kw">let </span>step = <span class="number">5.5f32</span>;
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>half_w = fw * <span class="number">0.5 </span>+ <span class="number">0.5</span>;
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>half_d = fd * <span class="number">0.5 </span>+ <span class="number">0.5</span>;
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="comment">// `ceil` w górę + `min 2` — pole musi mieć choćby dwa segmenty
+<a href=#406 id=406 data-nosnippet>406</a>        // na bok, inaczej płot wygląda jak jedna belka.
+<a href=#407 id=407 data-nosnippet>407</a>        </span><span class="kw">let </span>nx = (fw / step).ceil().max(<span class="number">2.0</span>) <span class="kw">as </span>i32;
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>nz = (fd / step).ceil().max(<span class="number">2.0</span>) <span class="kw">as </span>i32;
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="comment">// `false` = wiersz wzdłuż X, `true` = wzdłuż Z.
+<a href=#410 id=410 data-nosnippet>410</a>        </span><span class="kw">for </span>(along_z, z_edge, x_edge, yaw, n) <span class="kw">in </span>[
+<a href=#411 id=411 data-nosnippet>411</a>            (<span class="bool-val">false</span>, -half_d, <span class="number">0.0f32</span>, <span class="number">0.0f32</span>, nx),
+<a href=#412 id=412 data-nosnippet>412</a>            (<span class="bool-val">false</span>, half_d, <span class="number">0.0</span>, std::f32::consts::PI, nx),
+<a href=#413 id=413 data-nosnippet>413</a>            (<span class="bool-val">true</span>, <span class="number">0.0</span>, -half_w, std::f32::consts::FRAC_PI_2, nz),
+<a href=#414 id=414 data-nosnippet>414</a>            (<span class="bool-val">true</span>, <span class="number">0.0</span>, half_w, -std::f32::consts::FRAC_PI_2, nz),
+<a href=#415 id=415 data-nosnippet>415</a>        ] {
+<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">for </span>k <span class="kw">in </span><span class="number">0</span>..n {
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="comment">// `-0.5 .. +0.5` to środek pierwszego i ostatniego
+<a href=#418 id=418 data-nosnippet>418</a>                // segmentu, dzięki czemu płot jest symetryczny.
+<a href=#419 id=419 data-nosnippet>419</a>                </span><span class="kw">let </span>t = (k <span class="kw">as </span>f32 + <span class="number">0.5</span>) / n <span class="kw">as </span>f32 - <span class="number">0.5</span>;
+<a href=#420 id=420 data-nosnippet>420</a>                <span class="kw">let </span>pos = <span class="kw">if </span>along_z {
+<a href=#421 id=421 data-nosnippet>421</a>                    Vec3::new(x_edge, <span class="number">0.0</span>, t * n <span class="kw">as </span>f32 * step)
+<a href=#422 id=422 data-nosnippet>422</a>                } <span class="kw">else </span>{
+<a href=#423 id=423 data-nosnippet>423</a>                    Vec3::new(t * n <span class="kw">as </span>f32 * step, <span class="number">0.0</span>, z_edge)
+<a href=#424 id=424 data-nosnippet>424</a>                };
+<a href=#425 id=425 data-nosnippet>425</a>                out.push(Prop {
+<a href=#426 id=426 data-nosnippet>426</a>                    parts: fence.clone(),
+<a href=#427 id=427 data-nosnippet>427</a>                    pos,
+<a href=#428 id=428 data-nosnippet>428</a>                    yaw,
+<a href=#429 id=429 data-nosnippet>429</a>                });
+<a href=#430 id=430 data-nosnippet>430</a>            }
+<a href=#431 id=431 data-nosnippet>431</a>        }
+<a href=#432 id=432 data-nosnippet>432</a>    }
+<a href=#433 id=433 data-nosnippet>433</a>
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="comment">// --- budynki ---
+<a href=#435 id=435 data-nosnippet>435</a>    //
+<a href=#436 id=436 data-nosnippet>436</a>    // Każdy ma własny obrót: stodoło prostopadle do młyna czyta się
+<a href=#437 id=437 data-nosnippet>437</a>    // jako wieś, a wszystko równolegle — jako parking.
+<a href=#438 id=438 data-nosnippet>438</a>    // Pole ma 12×12 m, więc budynki stawiamy od 9 m od jego środka
+<a href=#439 id=439 data-nosnippet>439</a>    // w bok — inaczej stodoło (7,7 m szerokości) zasłaniałoby uprawę.
+<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">for </span>(file, pos, yaw, _w, _d, _h) <span class="kw">in </span>PROP_PLACES {
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(spec) = assets::BUILDINGS.iter().find(|b| b.file == <span class="kw-2">*</span>file) <span class="kw">else </span>{
+<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">continue</span>;
+<a href=#443 id=443 data-nosnippet>443</a>        };
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(model) = assets::load_building(file, spec.height) <span class="kw">else </span>{
+<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">continue</span>;
+<a href=#446 id=446 data-nosnippet>446</a>        };
+<a href=#447 id=447 data-nosnippet>447</a>        out.push(Prop {
+<a href=#448 id=448 data-nosnippet>448</a>            parts: register_model(scene, gpu, model),
+<a href=#449 id=449 data-nosnippet>449</a>            pos: <span class="kw-2">*</span>pos,
+<a href=#450 id=450 data-nosnippet>450</a>            yaw: <span class="kw-2">*</span>yaw,
+<a href=#451 id=451 data-nosnippet>451</a>        });
+<a href=#452 id=452 data-nosnippet>452</a>    }
+<a href=#453 id=453 data-nosnippet>453</a>
+<a href=#454 id=454 data-nosnippet>454</a>    out
+<a href=#455 id=455 data-nosnippet>455</a>}
+<a href=#456 id=456 data-nosnippet>456</a>
+<a href=#457 id=457 data-nosnippet>457</a><span class="doccomment">/// Buduje świat kolizji z **tych samych** danych co [`build_props`].
+<a href=#458 id=458 data-nosnippet>458</a>///
+<a href=#459 id=459 data-nosnippet>459</a>/// Pozycje budynków żyją w jednej stałej [`PROP_PLACES`], z której
+<a href=#460 id=460 data-nosnippet>460</a>/// korzystają obie funkcje. Duplikowanie ich w dwóch miejscach to
+<a href=#461 id=461 data-nosnippet>461</a>/// zaproszenie do błędu: wystarczy przesunąć stodoło w rysowaniu
+<a href=#462 id=462 data-nosnippet>462</a>/// i gracz przechodzi przez jego środek.
+<a href=#463 id=463 data-nosnippet>463</a></span><span class="kw">fn </span>build_collision_world() -&gt; collide::World {
+<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">let </span>fw = farm::FIELD_W <span class="kw">as </span>f32 * TILE;
+<a href=#465 id=465 data-nosnippet>465</a>    <span class="kw">let </span>fd = farm::FIELD_D <span class="kw">as </span>f32 * TILE;
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span><span class="kw-2">mut </span>w = collide::World::new(PLAY_LIMIT);
+<a href=#467 id=467 data-nosnippet>467</a>
+<a href=#468 id=468 data-nosnippet>468</a>    <span class="comment">// --- płot wokół pola ---
+<a href=#469 id=469 data-nosnippet>469</a>    //
+<a href=#470 id=470 data-nosnippet>470</a>    // Cztery **ciągłe** ściany, nie po jednym segmencie: gracz nie
+<a href=#471 id=471 data-nosnippet>471</a>    // powinien wciskać się w szczelinę między słupkami. Ściana ma
+<a href=#472 id=472 data-nosnippet>472</a>    // 0,3 m grubości i pełną wysokość płotu, więc przeskoczyć go
+<a href=#473 id=473 data-nosnippet>473</a>    // można, ale przejść obok — nie da się wejść na pole inaczej
+<a href=#474 id=474 data-nosnippet>474</a>    // niż przez bramę.
+<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="kw">let </span>half_w = fw * <span class="number">0.5 </span>+ <span class="number">0.5</span>;
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">let </span>half_d = fd * <span class="number">0.5 </span>+ <span class="number">0.5</span>;
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">let </span>t = <span class="number">0.3</span>;
+<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">for </span>(x, z, width, depth) <span class="kw">in </span>[
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="comment">// północna i południowa
+<a href=#480 id=480 data-nosnippet>480</a>        </span>(<span class="number">0.0f32</span>, -half_d, fw + <span class="number">1.0</span>, t),
+<a href=#481 id=481 data-nosnippet>481</a>        (<span class="number">0.0</span>, half_d, fw + <span class="number">1.0</span>, t),
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="comment">// wschodnia i zachodnia
+<a href=#483 id=483 data-nosnippet>483</a>        </span>(-half_w, <span class="number">0.0</span>, t, fd + <span class="number">1.0</span>),
+<a href=#484 id=484 data-nosnippet>484</a>        (half_w, <span class="number">0.0</span>, t, fd + <span class="number">1.0</span>),
+<a href=#485 id=485 data-nosnippet>485</a>    ] {
+<a href=#486 id=486 data-nosnippet>486</a>        w.add(collide::Solid {
+<a href=#487 id=487 data-nosnippet>487</a>            pos: Vec3::new(x, <span class="number">0.0</span>, z),
+<a href=#488 id=488 data-nosnippet>488</a>            width,
+<a href=#489 id=489 data-nosnippet>489</a>            depth,
+<a href=#490 id=490 data-nosnippet>490</a>            height: assets::FENCE_HEIGHT,
+<a href=#491 id=491 data-nosnippet>491</a>        });
+<a href=#492 id=492 data-nosnippet>492</a>    }
+<a href=#493 id=493 data-nosnippet>493</a>
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="comment">// --- budynki ---
+<a href=#495 id=495 data-nosnippet>495</a>    //
+<a href=#496 id=496 data-nosnippet>496</a>    // Rozmiary bierzemy z naturalnych proporcji modeli, a nie z AABB
+<a href=#497 id=497 data-nosnippet>497</a>    // modelu — budynki stoją na trawie, więc gracz nie wchodzi w ich
+<a href=#498 id=498 data-nosnippet>498</a>    // wnętrze przez dach.
+<a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">for </span>(<span class="kw">_</span>, pos, yaw, width, depth, height) <span class="kw">in </span>PROP_PLACES {
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="comment">// Obrót o `yaw` zmienia obrys w XZ, więc bierzemy obrys
+<a href=#501 id=501 data-nosnippet>501</a>        // prostokąta **po obrocie**. Inaczej gracz wchodziłby w róg
+<a href=#502 id=502 data-nosnippet>502</a>        // obróconej bryły albo blokował się o powietrze przy jej
+<a href=#503 id=503 data-nosnippet>503</a>        // krawędzi.
+<a href=#504 id=504 data-nosnippet>504</a>        // `abs()` na wyniku metody, a nie na niej samej: `x.sin().abs()`
+<a href=#505 id=505 data-nosnippet>505</a>        // daje `f32`, a `x.abs().sin()` już nie.
+<a href=#506 id=506 data-nosnippet>506</a>        </span><span class="kw">let </span>(s, c) = (yaw.sin().abs(), yaw.cos().abs());
+<a href=#507 id=507 data-nosnippet>507</a>        w.add(collide::Solid {
+<a href=#508 id=508 data-nosnippet>508</a>            pos: <span class="kw-2">*</span>pos,
+<a href=#509 id=509 data-nosnippet>509</a>            width: width * c + depth * s,
+<a href=#510 id=510 data-nosnippet>510</a>            depth: width * s + depth * c,
+<a href=#511 id=511 data-nosnippet>511</a>            height: <span class="kw-2">*</span>height,
+<a href=#512 id=512 data-nosnippet>512</a>        });
+<a href=#513 id=513 data-nosnippet>513</a>    }
+<a href=#514 id=514 data-nosnippet>514</a>
+<a href=#515 id=515 data-nosnippet>515</a>    w
+<a href=#516 id=516 data-nosnippet>516</a>}
+<a href=#517 id=517 data-nosnippet>517</a>
+<a href=#518 id=518 data-nosnippet>518</a><span class="doccomment">/// Macierz postaci.
+<a href=#519 id=519 data-nosnippet>519</a>///
+<a href=#520 id=520 data-nosnippet>520</a>/// Postać rysowana jest tylko wtedy, gdy kamera pierwszoosobowa
+<a href=#521 id=521 data-nosnippet>521</a>/// patrzy w dół wystarczająco (patrz [`build_draw_list`]) — wtedy
+<a href=#522 id=522 data-nosnippet>522</a>/// obrót postaci ma znaczenie, bo widzimy jej ramiona i tors. Przy
+<a href=#523 id=523 data-nosnippet>523</a>/// patrzeniu prosto przed siebie sylwetki nie widać, więc `yaw`
+<a href=#524 id=524 data-nosnippet>524</a>/// jest skądś „z definicji" zerowy i nie próbujemy zgadywać, którą
+<a href=#525 id=525 data-nosnippet>525</a>/// stronę ma bark.
+<a href=#526 id=526 data-nosnippet>526</a></span><span class="kw">fn </span>player_matrix(p: Vec3) -&gt; Mat4 {
+<a href=#527 id=527 data-nosnippet>527</a>    model_matrix(p, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, Vec3::ONE)
+<a href=#528 id=528 data-nosnippet>528</a>}
+<a href=#529 id=529 data-nosnippet>529</a>
+<a href=#530 id=530 data-nosnippet>530</a><span class="doccomment">/// Kamera pierwszoosobowa: oko gracza, cel w kierunku patrzenia.
+<a href=#531 id=531 data-nosnippet>531</a>///
+<a href=#532 id=532 data-nosnippet>532</a>/// Pozycja oka to `player_pos` podniesiony o [`EYE`] — wysokość
+<a href=#533 id=533 data-nosnippet>533</a>/// oczu człowieka, a nie „wysokość głowy modelu". Kierunek celu to
+<a href=#534 id=534 data-nosnippet>534</a>/// `eye + view_dir`, czyli wektor jednostkowy [`look::forward`].
+<a href=#535 id=535 data-nosnippet>535</a>///
+<a href=#536 id=536 data-nosnippet>536</a>/// Wcześniej kamera była trzecioosobowa (`+CAM_BACK` w Z, `+CAM_UP`
+<a href=#537 id=537 data-nosnippet>537</a>/// w Y) i patrzyła na gracza. Przy pierwszej osobie takie ustawienie
+<a href=#538 id=538 data-nosnippet>538</a>/// oznaczałoby, że gracz patrzy **odwrotnie** niż idzie.
+<a href=#539 id=539 data-nosnippet>539</a></span><span class="kw">fn </span>update_camera(game: <span class="kw-2">&amp;mut </span>Game) {
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>scene) = game.scene.lock() {
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>cam = scene.camera_mut();
+<a href=#542 id=542 data-nosnippet>542</a>        cam.position = game.eye;
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="comment">// Cel wyliczamy z kierunku, nie z kątów — dzięki temu kamera
+<a href=#544 id=544 data-nosnippet>544</a>        // zawsze jest spójna z tym, co narysował `look::forward`, nawet
+<a href=#545 id=545 data-nosnippet>545</a>        // jeśli kąty zostaną kiedyś przycięte inaczej.
+<a href=#546 id=546 data-nosnippet>546</a>        </span>cam.target = game.eye + game.view_dir;
+<a href=#547 id=547 data-nosnippet>547</a>    }
+<a href=#548 id=548 data-nosnippet>548</a>}
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a><span class="doccomment">/// Drobne przesunięcie rośliny w obrębie działki, żeby nie stały
+<a href=#551 id=551 data-nosnippet>551</a>/// w idealnym szyku.
+<a href=#552 id=552 data-nosnippet>552</a>///
+<a href=#553 id=553 data-nosnippet>553</a>/// Używamy liczb „współczynników złotego ciągu" zamiast `rand`, bo:
+<a href=#554 id=554 data-nosnippet>554</a>/// * ten sam `(ix, iz)` daje zawsze to samo przesunięcie — rośliny
+<a href=#555 id=555 data-nosnippet>555</a>///   nie skaczą między klatkami,
+<a href=#556 id=556 data-nosnippet>556</a>/// * nie potrzebujemy stanu generatora w strukturze gry.
+<a href=#557 id=557 data-nosnippet>557</a></span><span class="kw">fn </span>jitter(ix: usize, iz: usize) -&gt; (f32, f32) {
+<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">let </span>a = <span class="number">0.55 </span>* (<span class="number">0.618_034 </span>* (ix <span class="kw">as </span>f32 * <span class="number">7.0 </span>+ iz <span class="kw">as </span>f32 * <span class="number">3.0</span>).sin());
+<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">let </span>b = <span class="number">0.55 </span>* (<span class="number">0.618_034 </span>* (ix <span class="kw">as </span>f32 * <span class="number">3.0 </span>+ iz <span class="kw">as </span>f32 * <span class="number">7.0</span>).cos());
+<a href=#560 id=560 data-nosnippet>560</a>    (a, b)
+<a href=#561 id=561 data-nosnippet>561</a>}
+<a href=#562 id=562 data-nosnippet>562</a>
+<a href=#563 id=563 data-nosnippet>563</a><span class="doccomment">/// Składa listę obiektów 3D na bieżącą klatkę.
+<a href=#564 id=564 data-nosnippet>564</a>///
+<a href=#565 id=565 data-nosnippet>565</a>/// Kolejność ma znaczenie tylko dla czytelności — głębią zajmuje się
+<a href=#566 id=566 data-nosnippet>566</a>/// depth buffer, a potok nie ma mieszania alfa.
+<a href=#567 id=567 data-nosnippet>567</a></span><span class="kw">fn </span>build_draw_list(game: <span class="kw-2">&amp;mut </span>Game) {
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span><span class="kw-2">mut </span>cmds: Vec&lt;DrawCmd&gt; = Vec::with_capacity(<span class="number">160</span>);
+<a href=#569 id=569 data-nosnippet>569</a>    <span class="kw">let </span>one = model_matrix(Vec3::ZERO, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, Vec3::ONE);
+<a href=#570 id=570 data-nosnippet>570</a>    <span class="kw">let </span>m = <span class="kw-2">&amp;</span>game.meshes;
+<a href=#571 id=571 data-nosnippet>571</a>
+<a href=#572 id=572 data-nosnippet>572</a>    <span class="comment">// Trawa i gleba leżą nieruchomo.
+<a href=#573 id=573 data-nosnippet>573</a>    </span>cmds.push(DrawCmd::new(m.ground, one));
+<a href=#574 id=574 data-nosnippet>574</a>    cmds.push(DrawCmd::new(m.soil, one));
+<a href=#575 id=575 data-nosnippet>575</a>
+<a href=#576 id=576 data-nosnippet>576</a>    <span class="comment">// Płot i budynki.
+<a href=#577 id=577 data-nosnippet>577</a>    </span><span class="kw">for </span>prop <span class="kw">in </span><span class="kw-2">&amp;</span>m.buildings {
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>mat = model_matrix(prop.pos, prop.yaw, <span class="number">0.0</span>, <span class="number">0.0</span>, Vec3::ONE);
+<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">for </span>(id, mat_id) <span class="kw">in </span><span class="kw-2">&amp;</span>prop.parts {
+<a href=#580 id=580 data-nosnippet>580</a>            cmds.push(DrawCmd::new(<span class="kw-2">*</span>id, mat).with_material(<span class="kw-2">*</span>mat_id));
+<a href=#581 id=581 data-nosnippet>581</a>        }
+<a href=#582 id=582 data-nosnippet>582</a>    }
+<a href=#583 id=583 data-nosnippet>583</a>
+<a href=#584 id=584 data-nosnippet>584</a>    <span class="comment">// Rośliny: dla każdej zasadzonej działki dobieramy siatkę wg
+<a href=#585 id=585 data-nosnippet>585</a>    // wzrostu. Trzy siatki zamiast skaliowania jednej, bo skalowanie
+<a href=#586 id=586 data-nosnippet>586</a>    // zniekształcałoby proporcje łodygi.
+<a href=#587 id=587 data-nosnippet>587</a>    </span><span class="kw">for </span>iz <span class="kw">in </span><span class="number">0</span>..farm::FIELD_D {
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">for </span>ix <span class="kw">in </span><span class="number">0</span>..farm::FIELD_W {
+<a href=#589 id=589 data-nosnippet>589</a>            <span class="kw">let </span>tile = game.farm.get(ix, iz);
+<a href=#590 id=590 data-nosnippet>590</a>            <span class="kw">if </span>tile == farm::Tile::Empty {
+<a href=#591 id=591 data-nosnippet>591</a>                <span class="kw">continue</span>;
+<a href=#592 id=592 data-nosnippet>592</a>            }
+<a href=#593 id=593 data-nosnippet>593</a>            <span class="kw">let </span>g = tile.growth();
+<a href=#594 id=594 data-nosnippet>594</a>            <span class="kw">let </span>stage = <span class="kw">if </span>tile.is_ripe() {
+<a href=#595 id=595 data-nosnippet>595</a>                <span class="number">2
+<a href=#596 id=596 data-nosnippet>596</a>            </span>} <span class="kw">else if </span>g &lt; <span class="number">0.5 </span>{
+<a href=#597 id=597 data-nosnippet>597</a>                <span class="number">0
+<a href=#598 id=598 data-nosnippet>598</a>            </span>} <span class="kw">else </span>{
+<a href=#599 id=599 data-nosnippet>599</a>                <span class="number">1
+<a href=#600 id=600 data-nosnippet>600</a>            </span>};
+<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">let </span>(jx, jz) = jitter(ix, iz);
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="kw">let </span>pos = tile_center(ix, iz) + Vec3::new(jx, <span class="number">0.0</span>, jz);
+<a href=#603 id=603 data-nosnippet>603</a>            cmds.push(DrawCmd::new(m.plant[stage], player_matrix(pos)));
+<a href=#604 id=604 data-nosnippet>604</a>        }
+<a href=#605 id=605 data-nosnippet>605</a>    }
+<a href=#606 id=606 data-nosnippet>606</a>
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="comment">// Druty kolizji (`F1`) — na końcu, żeby nie mieszały się z
+<a href=#608 id=608 data-nosnippet>608</a>    // roślinami przy sortowaniu i były zawsze na wierzchu.
+<a href=#609 id=609 data-nosnippet>609</a>    </span>push_collider_debug(game, <span class="kw-2">&amp;mut </span>cmds);
+<a href=#610 id=610 data-nosnippet>610</a>
+<a href=#611 id=611 data-nosnippet>611</a>    <span class="comment">// Gracz.
+<a href=#612 id=612 data-nosnippet>612</a>    </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>scene) = game.scene.lock() {
+<a href=#613 id=613 data-nosnippet>613</a>        scene.set_commands(cmds);
+<a href=#614 id=614 data-nosnippet>614</a>    }
+<a href=#615 id=615 data-nosnippet>615</a>}
+<a href=#616 id=616 data-nosnippet>616</a>
+<a href=#617 id=617 data-nosnippet>617</a><span class="doccomment">/// Druty kolizji: pomarańczowe bryły świata + błękitny sześcian gracza.
+<a href=#618 id=618 data-nosnippet>618</a>///
+<a href=#619 id=619 data-nosnippet>619</a>/// Rysujemy **krawędzie** (patrz [`geometry::collider_box`]), więc nic
+<a href=#620 id=620 data-nosnippet>620</a>/// nie zasłania i widać, gdzie naprawdę kończy się przeszkoda.
+<a href=#621 id=621 data-nosnippet>621</a>/// Sześcian gracza pokazuje promień kolizji, który jest niewidoczny —
+<a href=#622 id=622 data-nosnippet>622</a>/// bez niego gracz wydaje się wchodzić w ścianę „do połowy".
+<a href=#623 id=623 data-nosnippet>623</a>///
+<a href=#624 id=624 data-nosnippet>624</a>/// Debug bez GPU: `update` przełącza tryb klawiszem `F1`, a stan
+<a href=#625 id=625 data-nosnippet>625</a>/// pokazuje `draw_hud`.
+<a href=#626 id=626 data-nosnippet>626</a></span><span class="kw">fn </span>push_collider_debug(game: <span class="kw-2">&amp;</span>Game, cmds: <span class="kw-2">&amp;mut </span>Vec&lt;DrawCmd&gt;) {
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">if </span>!game.show_colliders {
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">return</span>;
+<a href=#629 id=629 data-nosnippet>629</a>    }
+<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">let </span>m = <span class="kw-2">&amp;</span>game.meshes;
+<a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">for </span>b <span class="kw">in </span>game.world.boxes() {
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="comment">// Siatka to kubit jednostkowy, więc skalujemy do pełnej bryły:
+<a href=#633 id=633 data-nosnippet>633</a>        // `2 * half` daje szerokość 2 m przy `half = 1`.
+<a href=#634 id=634 data-nosnippet>634</a>        </span><span class="kw">let </span>scale = Mat4::from_scale(b.half * <span class="number">2.0</span>);
+<a href=#635 id=635 data-nosnippet>635</a>        cmds.push(DrawCmd::new(
+<a href=#636 id=636 data-nosnippet>636</a>            m.collider,
+<a href=#637 id=637 data-nosnippet>637</a>            Mat4::from_translation(b.center) * scale,
+<a href=#638 id=638 data-nosnippet>638</a>        ));
+<a href=#639 id=639 data-nosnippet>639</a>    }
+<a href=#640 id=640 data-nosnippet>640</a>    <span class="comment">// Sześcian gracza: dolna krawędź na wysokości stóp, więc przesuwamy
+<a href=#641 id=641 data-nosnippet>641</a>    // o pół wysokości. Środek `pos` to stopy, a nie środek ciała.
+<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">let </span>feet = game.player.pos;
+<a href=#643 id=643 data-nosnippet>643</a>    <span class="kw">let </span>half = Vec3::new(
+<a href=#644 id=644 data-nosnippet>644</a>        collide::PLAYER_RADIUS,
+<a href=#645 id=645 data-nosnippet>645</a>        collide::PLAYER_HEIGHT * <span class="number">0.5</span>,
+<a href=#646 id=646 data-nosnippet>646</a>        collide::PLAYER_RADIUS,
+<a href=#647 id=647 data-nosnippet>647</a>    );
+<a href=#648 id=648 data-nosnippet>648</a>    cmds.push(DrawCmd::new(
+<a href=#649 id=649 data-nosnippet>649</a>        m.player_box,
+<a href=#650 id=650 data-nosnippet>650</a>        Mat4::from_translation(feet + Vec3::new(<span class="number">0.0</span>, collide::PLAYER_HEIGHT * <span class="number">0.5</span>, <span class="number">0.0</span>))
+<a href=#651 id=651 data-nosnippet>651</a>            * Mat4::from_scale(half * <span class="number">2.0</span>),
+<a href=#652 id=652 data-nosnippet>652</a>    ));
+<a href=#653 id=653 data-nosnippet>653</a>}
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a><span class="doccomment">/// Krok symulacji + wejście.
+<a href=#656 id=656 data-nosnippet>656</a></span><span class="kw">fn </span>update(ctx: <span class="kw-2">&amp;mut </span>Ctx, game: <span class="kw-2">&amp;mut </span>Game) {
+<a href=#657 id=657 data-nosnippet>657</a>    <span class="kw">let </span>dt = ctx.dt();
+<a href=#658 id=658 data-nosnippet>658</a>    game.time += dt;
+<a href=#659 id=659 data-nosnippet>659</a>    <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>scene) = game.scene.lock() {
+<a href=#660 id=660 data-nosnippet>660</a>        scene.advance(dt);
+<a href=#661 id=661 data-nosnippet>661</a>    }
+<a href=#662 id=662 data-nosnippet>662</a>
+<a href=#663 id=663 data-nosnippet>663</a>    <span class="kw">if </span>ctx.input.just_pressed(Key::Escape) {
+<a href=#664 id=664 data-nosnippet>664</a>        std::process::exit(<span class="number">0</span>);
+<a href=#665 id=665 data-nosnippet>665</a>    }
+<a href=#666 id=666 data-nosnippet>666</a>    <span class="comment">// `F1` przełącza druty kolizji. Bez podpowiedzi w HUD-u tryb
+<a href=#667 id=667 data-nosnippet>667</a>    // wyglądałby jak błąd renderowania, więc stan pokazujemy w
+<a href=#668 id=668 data-nosnippet>668</a>    // lewym dolnym rogu (patrz `draw_hud`).
+<a href=#669 id=669 data-nosnippet>669</a>    </span><span class="kw">if </span>ctx.input.just_pressed(Key::F1) {
+<a href=#670 id=670 data-nosnippet>670</a>        game.show_colliders = !game.show_colliders;
+<a href=#671 id=671 data-nosnippet>671</a>    }
+<a href=#672 id=672 data-nosnippet>672</a>
+<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">if </span>ctx.input.just_pressed(Key::KeyR) {
+<a href=#674 id=674 data-nosnippet>674</a>        game.farm = Farm::new();
+<a href=#675 id=675 data-nosnippet>675</a>        game.won = <span class="bool-val">false</span>;
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="comment">// Reset przywraca dokładnie stan startowy — także pozycję
+<a href=#677 id=677 data-nosnippet>677</a>        // i kierunek patrzenia. Bez tego gracz stałby tyłem do pola
+<a href=#678 id=678 data-nosnippet>678</a>        // albo na środku uprawy.
+<a href=#679 id=679 data-nosnippet>679</a>        </span>game.player
+<a href=#680 id=680 data-nosnippet>680</a>            .teleport(<span class="number">0.0</span>, farm::FIELD_D <span class="kw">as </span>f32 * TILE * <span class="number">0.5 </span>+ START_OFFSET);
+<a href=#681 id=681 data-nosnippet>681</a>        game.player_pos = game.player.pos;
+<a href=#682 id=682 data-nosnippet>682</a>        game.yaw = START_YAW;
+<a href=#683 id=683 data-nosnippet>683</a>        game.pitch = START_PITCH;
+<a href=#684 id=684 data-nosnippet>684</a>        game.walking = <span class="number">0.0</span>;
+<a href=#685 id=685 data-nosnippet>685</a>        game.walk_blend = <span class="number">0.0</span>;
+<a href=#686 id=686 data-nosnippet>686</a>    }
+<a href=#687 id=687 data-nosnippet>687</a>
+<a href=#688 id=688 data-nosnippet>688</a>    <span class="comment">// --- obrót kamery myszą ---
+<a href=#689 id=689 data-nosnippet>689</a>    //
+<a href=#690 id=690 data-nosnippet>690</a>    // `mouse_delta()` to ruch względny (nie pozycja kursora), więc
+<a href=#691 id=691 data-nosnippet>691</a>    // obrót nie skacze, gdy kursor znalazł się w rogu okna. Silnik
+<a href=#692 id=692 data-nosnippet>692</a>    // limituje deltę do 200 px, co chroni przed skokiem po powrocie
+<a href=#693 id=693 data-nosnippet>693</a>    // z alt-tab.
+<a href=#694 id=694 data-nosnippet>694</a>    //
+<a href=#695 id=695 data-nosnippet>695</a>    // Znak `-=` dla `yaw`: przesunięcie myszy w prawo ma obrócić kamerę
+<a href=#696 id=696 data-nosnippet>696</a>    // w prawo, czyli zmniejszyć kąt, bo dodatni `yaw` skręca w lewo
+<a href=#697 id=697 data-nosnippet>697</a>    // (konwencja matematyczna).
+<a href=#698 id=698 data-nosnippet>698</a>    </span><span class="kw">let </span>m = ctx.input.mouse_delta();
+<a href=#699 id=699 data-nosnippet>699</a>    <span class="kw">if </span>m.<span class="macro">x !</span>= <span class="number">0.0 </span>|| m.<span class="macro">y !</span>= <span class="number">0.0 </span>{
+<a href=#700 id=700 data-nosnippet>700</a>        game.yaw -= m.x * LOOK_SENS;
+<a href=#701 id=701 data-nosnippet>701</a>        game.pitch = clamp_pitch(game.pitch - m.y * LOOK_SENS);
+<a href=#702 id=702 data-nosnippet>702</a>    }
+<a href=#703 id=703 data-nosnippet>703</a>    <span class="comment">// `yaw` rośnie w nieskończoność — przy 100 obrotach myszy
+<a href=#704 id=704 data-nosnippet>704</a>    // wychodzi już tysiąc radianów i `sin_cos` traci precyzję.
+<a href=#705 id=705 data-nosnippet>705</a>    // Składamy do `-PI..PI`.
+<a href=#706 id=706 data-nosnippet>706</a>    </span><span class="kw">if </span>game.yaw &gt; std::f32::consts::PI || game.yaw &lt; -std::f32::consts::PI {
+<a href=#707 id=707 data-nosnippet>707</a>        game.yaw = game.yaw.rem_euclid(std::f32::consts::TAU);
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">if </span>game.yaw &gt; std::f32::consts::PI {
+<a href=#709 id=709 data-nosnippet>709</a>            game.yaw -= std::f32::consts::TAU;
+<a href=#710 id=710 data-nosnippet>710</a>        }
+<a href=#711 id=711 data-nosnippet>711</a>    }
+<a href=#712 id=712 data-nosnippet>712</a>
+<a href=#713 id=713 data-nosnippet>713</a>    <span class="comment">// --- ruch gracza ---
+<a href=#714 id=714 data-nosnippet>714</a>    //
+<a href=#715 id=715 data-nosnippet>715</a>    // Dwie składowe wejścia: `W/S` na osi „do przodu / do tyłu" względem
+<a href=#716 id=716 data-nosnippet>716</a>    // kierunku patrzenia i `A/D` na „w lewo / w prawo". Oś pionowa jest
+<a href=#717 id=717 data-nosnippet>717</a>    // zawsze `0` — gracz nie lata i nie chodzi po ścianach.
+<a href=#718 id=718 data-nosnippet>718</a>    //
+<a href=#719 id=719 data-nosnippet>719</a>    // Wszystko liczy [`look::move_dir`], który **normalizuje** wynik.
+<a href=#720 id=720 data-nosnippet>720</a>    // Bez tego `W` + `D` dawałoby √2 × WALK_SPEED, czyli chód po skosie
+<a href=#721 id=721 data-nosnippet>721</a>    // byłby szybszy niż po prostej.
+<a href=#722 id=722 data-nosnippet>722</a>    </span><span class="kw">let </span>fwd_in = ctx.input.axis(Key::KeyS, Key::KeyW);
+<a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">let </span>strafe_in = ctx.input.axis(Key::KeyA, Key::KeyD);
+<a href=#724 id=724 data-nosnippet>724</a>    <span class="comment">// `move_dir` bierze `yaw`, więc obrót myszą obraca też kierunek
+<a href=#725 id=725 data-nosnippet>725</a>    // chodzenia — to właśnie ta własność, o którą prosiłeś.
+<a href=#726 id=726 data-nosnippet>726</a>    </span><span class="kw">let </span>dir = move_dir(game.yaw, fwd_in, strafe_in);
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="comment">// Ruch: `Player::step` liczy chód w kierunku `dir`, grawitację
+<a href=#728 id=728 data-nosnippet>728</a>    // i skok, a `collide::World` rozwiązuje wejścia w budynki i płot.
+<a href=#729 id=729 data-nosnippet>729</a>    //
+<a href=#730 id=730 data-nosnippet>730</a>    // Krok wykonujemy **zawsze**, także gdy `dir` jest zerowe:
+<a href=#731 id=731 data-nosnippet>731</a>    // inaczej gracz zastyłby w powietrzu po wypchnięciu ze skoku
+<a href=#732 id=732 data-nosnippet>732</a>    // i nigdy by nie wylądował.
+<a href=#733 id=733 data-nosnippet>733</a>    // Skakamy **wciśnięciem** Spacji (`just_pressed`), nie jej
+<a href=#734 id=734 data-nosnippet>734</a>    // trzymaniem — inaczej gracz wskakiwałby w miejscu przy każdym
+<a href=#735 id=735 data-nosnippet>735</a>    // lądowaniu, bo `pressed` jest prawdziwe przez cały czas wciśnięcia.
+<a href=#736 id=736 data-nosnippet>736</a>    </span><span class="kw">let </span>jump = ctx.input.just_pressed(Key::Space);
+<a href=#737 id=737 data-nosnippet>737</a>    game.player.step(
+<a href=#738 id=738 data-nosnippet>738</a>        dt,
+<a href=#739 id=739 data-nosnippet>739</a>        dir,
+<a href=#740 id=740 data-nosnippet>740</a>        jump,
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw-2">&amp;</span>game.world,
+<a href=#742 id=742 data-nosnippet>742</a>        collide::PLAYER_RADIUS,
+<a href=#743 id=743 data-nosnippet>743</a>        collide::PLAYER_HEIGHT,
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw-2">&amp;</span>game.player_cfg,
+<a href=#745 id=745 data-nosnippet>745</a>    );
+<a href=#746 id=746 data-nosnippet>746</a>
+<a href=#747 id=747 data-nosnippet>747</a>    <span class="comment">// Ograniczenie do kwadratu świata: bez niego gracz wychodzi
+<a href=#748 id=748 data-nosnippet>748</a>    // poza teren i kamera pokazuje pustą mgłę. `Player::step` pilnuje
+<a href=#749 id=749 data-nosnippet>749</a>    // przeszkód, więc granicę mapy trzymamy osobno.
+<a href=#750 id=750 data-nosnippet>750</a>    </span><span class="kw">let </span>limit = game.world.limit;
+<a href=#751 id=751 data-nosnippet>751</a>    game.player.pos.x = game.player.pos.x.clamp(-limit, limit);
+<a href=#752 id=752 data-nosnippet>752</a>    game.player.pos.z = game.player.pos.z.clamp(-limit, limit);
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a>    <span class="kw">if </span>dir.length_squared() &gt; <span class="number">1e-6 </span>{
+<a href=#755 id=755 data-nosnippet>755</a>        <span class="comment">// Faza rośnie o **przebytą** drogę (ok. 2 kroki na metr), a nie
+<a href=#756 id=756 data-nosnippet>756</a>        // o czas — dzięki temu rytm kołysania nie zależy od `dt`
+<a href=#757 id=757 data-nosnippet>757</a>        // i przy 30 FPS wygląda tak samo jak przy 144.
+<a href=#758 id=758 data-nosnippet>758</a>        </span><span class="kw">let </span>step = dir * (game.player_cfg.walk_speed * dt);
+<a href=#759 id=759 data-nosnippet>759</a>        game.walking += step.length() * <span class="number">6.0</span>;
+<a href=#760 id=760 data-nosnippet>760</a>    }
+<a href=#761 id=761 data-nosnippet>761</a>    <span class="comment">// `walk_blend` wygładza start i stop. `1 - exp(-k*dt)` to
+<a href=#762 id=762 data-nosnippet>762</a>    // wygładzanie niezależne od częstotliwości klatek: przy małym `dt`
+<a href=#763 id=763 data-nosnippet>763</a>    // zbliża się do `k*dt`, przy dużym nie "przeskakuje" do 1.
+<a href=#764 id=764 data-nosnippet>764</a>    // Stać w miejscu ma wygaszać szybciej niż ruszać.
+<a href=#765 id=765 data-nosnippet>765</a>    </span><span class="kw">let </span>target = f32::from(dir.length_squared() &gt; <span class="number">1e-6</span>);
+<a href=#766 id=766 data-nosnippet>766</a>    <span class="kw">let </span>k = <span class="kw">if </span>target &gt; game.walk_blend { <span class="number">11.0 </span>} <span class="kw">else </span>{ <span class="number">16.0 </span>};
+<a href=#767 id=767 data-nosnippet>767</a>    game.walk_blend += (target - game.walk_blend) * (<span class="number">1.0 </span>- (-k * dt).exp());
+<a href=#768 id=768 data-nosnippet>768</a>
+<a href=#769 id=769 data-nosnippet>769</a>    <span class="comment">// Oko trzymamy w jednym miejscu, żeby rysowanie nie musiało
+<a href=#770 id=770 data-nosnippet>770</a>    // zgadywać, co widzi gracz. `eye` unosi się do wysokości oczu,
+<a href=#771 id=771 data-nosnippet>771</a>    // `view_dir` to pełny kierunek z pitchem.
+<a href=#772 id=772 data-nosnippet>772</a>    </span>game.view_dir = forward(game.yaw, game.pitch);
+<a href=#773 id=773 data-nosnippet>773</a>
+<a href=#774 id=774 data-nosnippet>774</a>    <span class="comment">// Pozycja stóp jest przycięta do `0..=MAX_FOOT_Y`.
+<a href=#775 id=775 data-nosnippet>775</a>    //
+<a href=#776 id=776 data-nosnippet>776</a>    // Dolna granica to podłoga: bez niej oko schodziłoby pod ziemię
+<a href=#777 id=777 data-nosnippet>777</a>    // przy pierwszym kroku w dół. Górna to **zabezpieczenie**, nie
+<a href=#778 id=778 data-nosnippet>778</a>    // mechanika skoku — `Player::step` sam pilnuje grawitacji, a skok
+<a href=#779 id=779 data-nosnippet>779</a>    // osiąga ~1,4 m przy suficie 6 m. Bez tej górnej granicy każdy
+<a href=#780 id=780 data-nosnippet>780</a>    // błąd w fizyce objawiałby się jako „kamera ucieka w górę" zamiast
+<a href=#781 id=781 data-nosnippet>781</a>    // zrzutu błędu, a taki objaw jest bardzo trudny do zlokalizowania.
+<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">let </span>feet = game.player.pos;
+<a href=#783 id=783 data-nosnippet>783</a>    <span class="kw">let </span>feet = Vec3::new(feet.x, feet.y.clamp(<span class="number">0.0</span>, MAX_FOOT_Y), feet.z);
+<a href=#784 id=784 data-nosnippet>784</a>    game.player.pos.y = feet.y;
+<a href=#785 id=785 data-nosnippet>785</a>    game.player_pos = feet;
+<a href=#786 id=786 data-nosnippet>786</a>
+<a href=#787 id=787 data-nosnippet>787</a>    <span class="comment">// Lekkie kołysanie przy chodzeniu. Przesuwamy oko wzdłuż osi
+<a href=#788 id=788 data-nosnippet>788</a>    // „w górę ekranu" (`look::up`), a nie wzdłuż globalnego Y — dzięki
+<a href=#789 id=789 data-nosnippet>789</a>    // temu głowa chodzi w górę i w dół także wtedy, gdy gracz patrzy
+<a href=#790 id=790 data-nosnippet>790</a>    // pod nogi, i kołysanie nie zmienia kierunku patrzenia.
+<a href=#791 id=791 data-nosnippet>791</a>    </span><span class="kw">let </span>bob = game.walking.sin() * <span class="number">0.045 </span>* game.walk_blend;
+<a href=#792 id=792 data-nosnippet>792</a>    game.eye = feet + Vec3::new(<span class="number">0.0</span>, EYE, <span class="number">0.0</span>) + up(game.yaw, game.pitch) * bob;
+<a href=#793 id=793 data-nosnippet>793</a>
+<a href=#794 id=794 data-nosnippet>794</a>    <span class="comment">// --- interakcja z polem ---
+<a href=#795 id=795 data-nosnippet>795</a>    //
+<a href=#796 id=796 data-nosnippet>796</a>    // W pierwszej osobie gracz nie stoi na działce, tylko obok niej,
+<a href=#797 id=797 data-nosnippet>797</a>    // więc `E` musi działać na tę działkę, **którą wskazuje**, nie
+<a href=#798 id=798 data-nosnippet>798</a>    // tę, na której stoi. Bierzemy więc punkt przed graczem.
+<a href=#799 id=799 data-nosnippet>799</a>    </span><span class="kw">if </span>ctx.input.just_pressed(Key::KeyE) {
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>target = game.eye + game.view_dir * farm::REACH;
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">match </span>tile_at(target) {
+<a href=#802 id=802 data-nosnippet>802</a>            <span class="prelude-val">Some</span>((ix, iz)) =&gt; {
+<a href=#803 id=803 data-nosnippet>803</a>                game.farm.interact(ix, iz);
+<a href=#804 id=804 data-nosnippet>804</a>            }
+<a href=#805 id=805 data-nosnippet>805</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#806 id=806 data-nosnippet>806</a>                game.farm.message = <span class="string">"Nie ma tu pola"</span>.into();
+<a href=#807 id=807 data-nosnippet>807</a>                game.farm.message_time = <span class="number">1.2</span>;
+<a href=#808 id=808 data-nosnippet>808</a>            }
+<a href=#809 id=809 data-nosnippet>809</a>        }
+<a href=#810 id=810 data-nosnippet>810</a>    }
+<a href=#811 id=811 data-nosnippet>811</a>
+<a href=#812 id=812 data-nosnippet>812</a>    <span class="comment">// Rośliny dojrzewają niezależnie od tego, czy gracz patrzy.
+<a href=#813 id=813 data-nosnippet>813</a>    </span>game.farm.step(dt);
+<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">if </span>!game.won &amp;&amp; game.farm.is_won() {
+<a href=#815 id=815 data-nosnippet>815</a>        game.won = <span class="bool-val">true</span>;
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    update_camera(game);
+<a href=#819 id=819 data-nosnippet>819</a>    build_draw_list(game);
+<a href=#820 id=820 data-nosnippet>820</a>}
+<a href=#821 id=821 data-nosnippet>821</a>
+<a href=#822 id=822 data-nosnippet>822</a><span class="doccomment">/// HUD: stan pola, liczniki i podpowiedź sterowania.
+<a href=#823 id=823 data-nosnippet>823</a>///
+<a href=#824 id=824 data-nosnippet>824</a>/// Rysujemy w przestrzeni EKRANU (renderer 2D), tak jak w `uran-tanks`
+<a href=#825 id=825 data-nosnippet>825</a>/// i `junak-rider`, i z tej samego powodu: 2D nie przechodzi przez
+<a href=#826 id=826 data-nosnippet>826</a>/// post-processing 3D, więc tekst nie zostaje zniekształcony przez ACES
+<a href=#827 id=827 data-nosnippet>827</a>/// ani rozmyty przez bloom.
+<a href=#828 id=828 data-nosnippet>828</a></span><span class="kw">fn </span>draw_hud(ctx: <span class="kw-2">&amp;mut </span>Ctx, game: <span class="kw-2">&amp;</span>Game) {
+<a href=#829 id=829 data-nosnippet>829</a>    <span class="kw">let </span>size = ctx.window.logical_size();
+<a href=#830 id=830 data-nosnippet>830</a>    <span class="kw">let </span>(empty, growing, ready) = game.farm.counts();
+<a href=#831 id=831 data-nosnippet>831</a>
+<a href=#832 id=832 data-nosnippet>832</a>    <span class="comment">// --- pasek stanu pola (u góry ekranu) ---
+<a href=#833 id=833 data-nosnippet>833</a>    </span>ctx.gfx
+<a href=#834 id=834 data-nosnippet>834</a>        .screen_space()
+<a href=#835 id=835 data-nosnippet>835</a>        .layer(<span class="number">100</span>)
+<a href=#836 id=836 data-nosnippet>836</a>        .color(Color::from_hex(<span class="number">0x1B2430</span>))
+<a href=#837 id=837 data-nosnippet>837</a>        .draw_rect(Rect::new(
+<a href=#838 id=838 data-nosnippet>838</a>            Vec2::new(size.x * <span class="number">0.5 </span>- <span class="number">190.0</span>, <span class="number">14.0</span>),
+<a href=#839 id=839 data-nosnippet>839</a>            Vec2::new(size.x * <span class="number">0.5 </span>+ <span class="number">190.0</span>, <span class="number">44.0</span>),
+<a href=#840 id=840 data-nosnippet>840</a>        ));
+<a href=#841 id=841 data-nosnippet>841</a>    <span class="comment">// Proporcja paska to `ready / wszystkie`: to stan, który gracz
+<a href=#842 id=842 data-nosnippet>842</a>    // realnie zmienia — sadzenie samo w sobie nie kończy pracy.
+<a href=#843 id=843 data-nosnippet>843</a>    </span><span class="kw">let </span>total: f32 = (empty + growing + ready).max(<span class="number">1</span>) <span class="kw">as </span>f32;
+<a href=#844 id=844 data-nosnippet>844</a>    <span class="kw">let </span>t = ready <span class="kw">as </span>f32 / total;
+<a href=#845 id=845 data-nosnippet>845</a>    ctx.gfx
+<a href=#846 id=846 data-nosnippet>846</a>        .color(Color::from_hex(<span class="number">0xE8C547</span>))
+<a href=#847 id=847 data-nosnippet>847</a>        .draw_rect(Rect::new(
+<a href=#848 id=848 data-nosnippet>848</a>            Vec2::new(size.x * <span class="number">0.5 </span>- <span class="number">188.0</span>, <span class="number">38.0</span>),
+<a href=#849 id=849 data-nosnippet>849</a>            Vec2::new(size.x * <span class="number">0.5 </span>- <span class="number">188.0 </span>+ <span class="number">376.0 </span>* t, <span class="number">42.0</span>),
+<a href=#850 id=850 data-nosnippet>850</a>        ));
+<a href=#851 id=851 data-nosnippet>851</a>
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="comment">// --- celownik ---
+<a href=#853 id=853 data-nosnippet>853</a>    //
+<a href=#854 id=854 data-nosnippet>854</a>    // Kursor systemowy jest ukryty (`cursor_visible(false)` na oknie),
+<a href=#855 id=855 data-nosnippet>855</a>    // bo w pierwszej osobie mysz steruje kamerą, a nie wskazuje. Bez
+<a href=#856 id=856 data-nosnippet>856</a>    // własnego celownika gracz traci orientację, gdzie patrzy.
+<a href=#857 id=857 data-nosnippet>857</a>    //
+<a href=#858 id=858 data-nosnippet>858</a>    // Cztery krótkie „ramiona" zamiast pełnego krzyża: nie zasłaniają
+<a href=#859 id=859 data-nosnippet>859</a>    // tego, co jest pod nimi, a mimo to jednoznacznie wskazują środek
+<a href=#860 id=860 data-nosnippet>860</a>    // ekranu. Każde ramię rysujemy dwa razy — ciemnym prostokątem
+<a href=#861 id=861 data-nosnippet>861</a>    // o 1 px większym pod spodem, potem białym — żeby celownik
+<a href=#862 id=862 data-nosnippet>862</a>    // był widoczny i na jasnym trawniku, i na ciemnym budynku.
+<a href=#863 id=863 data-nosnippet>863</a>    </span>{
+<a href=#864 id=864 data-nosnippet>864</a>        <span class="kw">let </span>c = Vec2::new(size.x * <span class="number">0.5</span>, size.y * <span class="number">0.5</span>);
+<a href=#865 id=865 data-nosnippet>865</a>        <span class="kw">const </span>ARM: f32 = <span class="number">7.0</span>;
+<a href=#866 id=866 data-nosnippet>866</a>        <span class="kw">const </span>GAP: f32 = <span class="number">3.0</span>;
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">let </span>arms = [
+<a href=#868 id=868 data-nosnippet>868</a>            <span class="comment">// poziome: lewe i prawe
+<a href=#869 id=869 data-nosnippet>869</a>            </span>(Vec2::new(c.x - GAP - ARM, c.y), Vec2::new(c.x - GAP, c.y)),
+<a href=#870 id=870 data-nosnippet>870</a>            (Vec2::new(c.x + GAP, c.y), Vec2::new(c.x + GAP + ARM, c.y)),
+<a href=#871 id=871 data-nosnippet>871</a>            <span class="comment">// pionowe: górne i dolne
+<a href=#872 id=872 data-nosnippet>872</a>            </span>(Vec2::new(c.x, c.y - GAP - ARM), Vec2::new(c.x, c.y - GAP)),
+<a href=#873 id=873 data-nosnippet>873</a>            (Vec2::new(c.x, c.y + GAP), Vec2::new(c.x, c.y + GAP + ARM)),
+<a href=#874 id=874 data-nosnippet>874</a>        ];
+<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw">for </span>(a, b) <span class="kw">in </span>arms {
+<a href=#876 id=876 data-nosnippet>876</a>            <span class="kw">let </span>outline = Rect::new(
+<a href=#877 id=877 data-nosnippet>877</a>                Vec2::new(a.x - <span class="number">1.0</span>, a.y - <span class="number">1.0</span>),
+<a href=#878 id=878 data-nosnippet>878</a>                Vec2::new(b.x + <span class="number">1.0</span>, b.y + <span class="number">1.0</span>),
+<a href=#879 id=879 data-nosnippet>879</a>            );
+<a href=#880 id=880 data-nosnippet>880</a>            ctx.gfx.color(Color::from_hex(<span class="number">0x1B2430</span>)).draw_rect(outline);
+<a href=#881 id=881 data-nosnippet>881</a>            ctx.gfx
+<a href=#882 id=882 data-nosnippet>882</a>                .color(Color::from_hex(<span class="number">0xF4F7FB</span>))
+<a href=#883 id=883 data-nosnippet>883</a>                .draw_rect(Rect::new(a, b));
+<a href=#884 id=884 data-nosnippet>884</a>        }
+<a href=#885 id=885 data-nosnippet>885</a>    }
+<a href=#886 id=886 data-nosnippet>886</a>
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="comment">// Wskaźnik działki przed graczem: pokazuje, co stanie się po `E`.
+<a href=#888 id=888 data-nosnippet>888</a>    // Wskazujemy tam, gdzie patrzymy (`eye + view_dir * REACH`), bo w
+<a href=#889 id=889 data-nosnippet>889</a>    // pierwszej osobie gracz nie stoi na polu, tylko obok niego.
+<a href=#890 id=890 data-nosnippet>890</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>((ix, iz)) = tile_at(game.eye + game.view_dir * farm::REACH) {
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>(hint, c) = <span class="kw">match </span>game.farm.get(ix, iz) {
+<a href=#892 id=892 data-nosnippet>892</a>            farm::Tile::Empty =&gt; (<span class="string">"[E] Zasadz"</span>, Color::from_hex(<span class="number">0x9BE07A</span>)),
+<a href=#893 id=893 data-nosnippet>893</a>            farm::Tile::Ready =&gt; (<span class="string">"[E] Zbierz"</span>, Color::from_hex(<span class="number">0xF2C14E</span>)),
+<a href=#894 id=894 data-nosnippet>894</a>            farm::Tile::Growing { .. } =&gt; (<span class="string">"Rosnie..."</span>, Color::from_hex(<span class="number">0xB9C4D4</span>)),
+<a href=#895 id=895 data-nosnippet>895</a>        };
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(font) = game.font {
+<a href=#897 id=897 data-nosnippet>897</a>            ctx.gfx.color(c).draw_text(
+<a href=#898 id=898 data-nosnippet>898</a>                font,
+<a href=#899 id=899 data-nosnippet>899</a>                hint,
+<a href=#900 id=900 data-nosnippet>900</a>                Vec2::new(size.x * <span class="number">0.5</span>, size.y * <span class="number">0.5 </span>- <span class="number">90.0</span>),
+<a href=#901 id=901 data-nosnippet>901</a>                <span class="number">26.0</span>,
+<a href=#902 id=902 data-nosnippet>902</a>                TextAlign::Center,
+<a href=#903 id=903 data-nosnippet>903</a>            );
+<a href=#904 id=904 data-nosnippet>904</a>        }
+<a href=#905 id=905 data-nosnippet>905</a>    }
+<a href=#906 id=906 data-nosnippet>906</a>
+<a href=#907 id=907 data-nosnippet>907</a>    <span class="comment">// --- komunikat akcji ---
+<a href=#908 id=908 data-nosnippet>908</a>    </span><span class="kw">if </span>game.farm.message_time &gt; <span class="number">0.0 </span>{
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(font) = game.font {
+<a href=#910 id=910 data-nosnippet>910</a>            ctx.gfx.color(Color::from_hex(<span class="number">0xF4F7FB</span>)).draw_text(
+<a href=#911 id=911 data-nosnippet>911</a>                font,
+<a href=#912 id=912 data-nosnippet>912</a>                <span class="kw-2">&amp;</span>game.farm.message,
+<a href=#913 id=913 data-nosnippet>913</a>                Vec2::new(size.x * <span class="number">0.5</span>, size.y * <span class="number">0.5 </span>- <span class="number">130.0</span>),
+<a href=#914 id=914 data-nosnippet>914</a>                <span class="number">22.0</span>,
+<a href=#915 id=915 data-nosnippet>915</a>                TextAlign::Center,
+<a href=#916 id=916 data-nosnippet>916</a>            );
+<a href=#917 id=917 data-nosnippet>917</a>        }
+<a href=#918 id=918 data-nosnippet>918</a>    }
+<a href=#919 id=919 data-nosnippet>919</a>
+<a href=#920 id=920 data-nosnippet>920</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(font) = game.font <span class="kw">else </span>{ <span class="kw">return </span>};
+<a href=#921 id=921 data-nosnippet>921</a>
+<a href=#922 id=922 data-nosnippet>922</a>    <span class="comment">// --- liczniki (lewy górny róg) ---
+<a href=#923 id=923 data-nosnippet>923</a>    //
+<a href=#924 id=924 data-nosnippet>924</a>    // UWAGA: tylko znaki ASCII. Polskie diakrytyczne wywołują błąd
+<a href=#925 id=925 data-nosnippet>925</a>    // atlasu glifów w `uran-render` przy przepełnieniu (patrz
+<a href=#926 id=926 data-nosnippet>926</a>    // `draw_hud` w uran-tanks), więc HUD zostaje czytelny bez nich.
+<a href=#927 id=927 data-nosnippet>927</a>    </span>ctx.gfx.color(Color::from_hex(<span class="number">0xE8EEF8</span>)).draw_text(
+<a href=#928 id=928 data-nosnippet>928</a>        font,
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Zebrano: {}"</span>, game.farm.harvested),
+<a href=#930 id=930 data-nosnippet>930</a>        Vec2::new(<span class="number">24.0</span>, <span class="number">24.0</span>),
+<a href=#931 id=931 data-nosnippet>931</a>        <span class="number">24.0</span>,
+<a href=#932 id=932 data-nosnippet>932</a>        TextAlign::Left,
+<a href=#933 id=933 data-nosnippet>933</a>    );
+<a href=#934 id=934 data-nosnippet>934</a>    ctx.gfx.color(Color::from_hex(<span class="number">0xB9C4D4</span>)).draw_text(
+<a href=#935 id=935 data-nosnippet>935</a>        font,
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Puste {empty}  Rosnie {growing}  Gotowe {ready}"</span>),
+<a href=#937 id=937 data-nosnippet>937</a>        Vec2::new(<span class="number">24.0</span>, <span class="number">54.0</span>),
+<a href=#938 id=938 data-nosnippet>938</a>        <span class="number">18.0</span>,
+<a href=#939 id=939 data-nosnippet>939</a>        TextAlign::Left,
+<a href=#940 id=940 data-nosnippet>940</a>    );
+<a href=#941 id=941 data-nosnippet>941</a>
+<a href=#942 id=942 data-nosnippet>942</a>    <span class="comment">// --- sterowanie (lewy dolny róg) ---
+<a href=#943 id=943 data-nosnippet>943</a>    </span>ctx.gfx.color(Color::from_hex(<span class="number">0x8FA6C4</span>)).draw_text(
+<a href=#944 id=944 data-nosnippet>944</a>        font,
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="string">"WSAD chodzenie   mysz obrot   spacja skok   E sadz/zbierz   R nowa farma   F1 kolizje"</span>,
+<a href=#946 id=946 data-nosnippet>946</a>        Vec2::new(<span class="number">24.0</span>, size.y - <span class="number">32.0</span>),
+<a href=#947 id=947 data-nosnippet>947</a>        <span class="number">16.0</span>,
+<a href=#948 id=948 data-nosnippet>948</a>        TextAlign::Left,
+<a href=#949 id=949 data-nosnippet>949</a>    );
+<a href=#950 id=950 data-nosnippet>950</a>
+<a href=#951 id=951 data-nosnippet>951</a>    <span class="comment">// --- znacznik trybu debug (prawy dolny róg) ---
+<a href=#952 id=952 data-nosnippet>952</a>    //
+<a href=#953 id=953 data-nosnippet>953</a>    // Bez tego druty wyglądałyby jak błąd renderowania, a nie jak
+<a href=#954 id=954 data-nosnippet>954</a>    // włączone narzędzie. Kolor pasuje do pomarańczu kolidatorów.
+<a href=#955 id=955 data-nosnippet>955</a>    </span><span class="kw">if </span>game.show_colliders {
+<a href=#956 id=956 data-nosnippet>956</a>        ctx.gfx.color(Color::from_hex(<span class="number">0xFF7333</span>)).draw_text(
+<a href=#957 id=957 data-nosnippet>957</a>            font,
+<a href=#958 id=958 data-nosnippet>958</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"KOLIZJE ON  ({} brył)"</span>, game.world.boxes().len()),
+<a href=#959 id=959 data-nosnippet>959</a>            Vec2::new(size.x - <span class="number">24.0</span>, size.y - <span class="number">32.0</span>),
+<a href=#960 id=960 data-nosnippet>960</a>            <span class="number">16.0</span>,
+<a href=#961 id=961 data-nosnippet>961</a>            TextAlign::Right,
+<a href=#962 id=962 data-nosnippet>962</a>        );
+<a href=#963 id=963 data-nosnippet>963</a>    }
+<a href=#964 id=964 data-nosnippet>964</a>
+<a href=#965 id=965 data-nosnippet>965</a>    <span class="comment">// --- wygrana ---
+<a href=#966 id=966 data-nosnippet>966</a>    </span><span class="kw">if </span>game.won {
+<a href=#967 id=967 data-nosnippet>967</a>        ctx.gfx
+<a href=#968 id=968 data-nosnippet>968</a>            .screen_space()
+<a href=#969 id=969 data-nosnippet>969</a>            .layer(<span class="number">101</span>)
+<a href=#970 id=970 data-nosnippet>970</a>            .color(Color::from_hex(<span class="number">0x141A24</span>))
+<a href=#971 id=971 data-nosnippet>971</a>            .draw_rect(Rect::new(
+<a href=#972 id=972 data-nosnippet>972</a>                Vec2::new(<span class="number">0.0</span>, size.y * <span class="number">0.5 </span>- <span class="number">60.0</span>),
+<a href=#973 id=973 data-nosnippet>973</a>                Vec2::new(size.x, size.y * <span class="number">0.5 </span>+ <span class="number">60.0</span>),
+<a href=#974 id=974 data-nosnippet>974</a>            ));
+<a href=#975 id=975 data-nosnippet>975</a>        ctx.gfx.color(Color::from_hex(<span class="number">0xF2C14E</span>)).draw_text(
+<a href=#976 id=976 data-nosnippet>976</a>            font,
+<a href=#977 id=977 data-nosnippet>977</a>            <span class="string">"POLE DOJRZALE - ZBIERASZ!"</span>,
+<a href=#978 id=978 data-nosnippet>978</a>            Vec2::new(size.x * <span class="number">0.5</span>, size.y * <span class="number">0.5 </span>- <span class="number">12.0</span>),
+<a href=#979 id=979 data-nosnippet>979</a>            <span class="number">40.0</span>,
+<a href=#980 id=980 data-nosnippet>980</a>            TextAlign::Center,
+<a href=#981 id=981 data-nosnippet>981</a>        );
+<a href=#982 id=982 data-nosnippet>982</a>        ctx.gfx.color(Color::from_hex(<span class="number">0xE8EEF8</span>)).draw_text(
+<a href=#983 id=983 data-nosnippet>983</a>            font,
+<a href=#984 id=984 data-nosnippet>984</a>            <span class="string">"R - nowa farma"</span>,
+<a href=#985 id=985 data-nosnippet>985</a>            Vec2::new(size.x * <span class="number">0.5</span>, size.y * <span class="number">0.5 </span>+ <span class="number">26.0</span>),
+<a href=#986 id=986 data-nosnippet>986</a>            <span class="number">20.0</span>,
+<a href=#987 id=987 data-nosnippet>987</a>            TextAlign::Center,
+<a href=#988 id=988 data-nosnippet>988</a>        );
+<a href=#989 id=989 data-nosnippet>989</a>    }
+<a href=#990 id=990 data-nosnippet>990</a>}
+<a href=#991 id=991 data-nosnippet>991</a>
+<a href=#992 id=992 data-nosnippet>992</a><span class="doccomment">/// Proxy renderera 3D podpinany do renderera 2D (patrz `uran-render`).
+<a href=#993 id=993 data-nosnippet>993</a></span><span class="kw">struct </span>SceneProxy(Arc&lt;Mutex&lt;Renderer3d&gt;&gt;);
+<a href=#994 id=994 data-nosnippet>994</a>
+<a href=#995 id=995 data-nosnippet>995</a><span class="kw">impl </span>uran_render::Scene3d <span class="kw">for </span>SceneProxy {
+<a href=#996 id=996 data-nosnippet>996</a>    <span class="kw">fn </span>draw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, target: <span class="kw-2">&amp;</span>uran_render::Scene3dTarget&lt;<span class="lifetime">'_</span>&gt;) {
+<a href=#997 id=997 data-nosnippet>997</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>scene) = <span class="self">self</span>.<span class="number">0</span>.lock() {
+<a href=#998 id=998 data-nosnippet>998</a>            uran_render::Scene3d::draw(<span class="kw-2">&amp;mut *</span>scene, target);
+<a href=#999 id=999 data-nosnippet>999</a>        }
+<a href=#1000 id=1000 data-nosnippet>1000</a>    }
+<a href=#1001 id=1001 data-nosnippet>1001</a>
+<a href=#1002 id=1002 data-nosnippet>1002</a>    <span class="kw">fn </span>resize(<span class="kw-2">&amp;mut </span><span class="self">self</span>, w: u32, h: u32) {
+<a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>scene) = <span class="self">self</span>.<span class="number">0</span>.lock() {
+<a href=#1004 id=1004 data-nosnippet>1004</a>            uran_render::Scene3d::resize(<span class="kw-2">&amp;mut *</span>scene, w, h);
+<a href=#1005 id=1005 data-nosnippet>1005</a>        }
+<a href=#1006 id=1006 data-nosnippet>1006</a>    }
+<a href=#1007 id=1007 data-nosnippet>1007</a>}
+<a href=#1008 id=1008 data-nosnippet>1008</a>
+<a href=#1009 id=1009 data-nosnippet>1009</a><span class="doccomment">/// Punkt wejścia.
+<a href=#1010 id=1010 data-nosnippet>1010</a></span><span class="kw">fn </span>main() {
+<a href=#1011 id=1011 data-nosnippet>1011</a>    <span class="kw">let </span>game = Arc::new(Mutex::new(<span class="prelude-val">None</span>::&lt;Game&gt;));
+<a href=#1012 id=1012 data-nosnippet>1012</a>
+<a href=#1013 id=1013 data-nosnippet>1013</a>    <span class="kw">let </span>setup_system = {
+<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>game = Arc::clone(<span class="kw-2">&amp;</span>game);
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">move </span>|ctx: <span class="kw-2">&amp;mut </span>Ctx| {
+<a href=#1016 id=1016 data-nosnippet>1016</a>            <span class="kw">let </span><span class="kw-2">mut </span>guard = game.lock().expect(<span class="string">"lock gry"</span>);
+<a href=#1017 id=1017 data-nosnippet>1017</a>            <span class="kw">if </span>guard.is_some() {
+<a href=#1018 id=1018 data-nosnippet>1018</a>                <span class="kw">return</span>;
+<a href=#1019 id=1019 data-nosnippet>1019</a>            }
+<a href=#1020 id=1020 data-nosnippet>1020</a>            <span class="comment">// JEDEN `Device` obsługuje oba renderery, a `samples` MUSI
+<a href=#1021 id=1021 data-nosnippet>1021</a>            // się zgadzać — inaczej hdr-owa tekstura post-processingu
+<a href=#1022 id=1022 data-nosnippet>1022</a>            // nie przejdzie walidacji wgpu.
+<a href=#1023 id=1023 data-nosnippet>1023</a>            </span><span class="kw">let </span>built = {
+<a href=#1024 id=1024 data-nosnippet>1024</a>                <span class="kw">let </span>r = ctx.renderer.as_ref().expect(<span class="string">"renderer gotowy"</span>);
+<a href=#1025 id=1025 data-nosnippet>1025</a>                Game::new(r.gpu(), r.format(), r.samples())
+<a href=#1026 id=1026 data-nosnippet>1026</a>            };
+<a href=#1027 id=1027 data-nosnippet>1027</a>            <span class="kw-2">*</span>guard = <span class="prelude-val">Some</span>(built);
+<a href=#1028 id=1028 data-nosnippet>1028</a>            <span class="kw">let </span>g = guard.as_mut().expect(<span class="string">"właśnie utworzone"</span>);
+<a href=#1029 id=1029 data-nosnippet>1029</a>            g.font = ctx.assets.load_font(<span class="string">"assets/fonts/UranSans.ttf"</span>).ok();
+<a href=#1030 id=1030 data-nosnippet>1030</a>            <span class="kw">let </span>proxy = Box::new(SceneProxy(Arc::clone(<span class="kw-2">&amp;</span>g.scene)));
+<a href=#1031 id=1031 data-nosnippet>1031</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(r) = ctx.renderer.as_mut() {
+<a href=#1032 id=1032 data-nosnippet>1032</a>                r.set_scene3d(proxy);
+<a href=#1033 id=1033 data-nosnippet>1033</a>            }
+<a href=#1034 id=1034 data-nosnippet>1034</a>        }
+<a href=#1035 id=1035 data-nosnippet>1035</a>    };
+<a href=#1036 id=1036 data-nosnippet>1036</a>
+<a href=#1037 id=1037 data-nosnippet>1037</a>    <span class="kw">let </span>update_system = {
+<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="kw">let </span>game = Arc::clone(<span class="kw-2">&amp;</span>game);
+<a href=#1039 id=1039 data-nosnippet>1039</a>        <span class="kw">move </span>|ctx: <span class="kw-2">&amp;mut </span>Ctx| {
+<a href=#1040 id=1040 data-nosnippet>1040</a>            <span class="kw">let </span><span class="kw-2">mut </span>guard = game.lock().expect(<span class="string">"lock gry"</span>);
+<a href=#1041 id=1041 data-nosnippet>1041</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(g) = guard.as_mut() {
+<a href=#1042 id=1042 data-nosnippet>1042</a>                update(ctx, g);
+<a href=#1043 id=1043 data-nosnippet>1043</a>            }
+<a href=#1044 id=1044 data-nosnippet>1044</a>        }
+<a href=#1045 id=1045 data-nosnippet>1045</a>    };
+<a href=#1046 id=1046 data-nosnippet>1046</a>
+<a href=#1047 id=1047 data-nosnippet>1047</a>    <span class="kw">let </span>draw_system = {
+<a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="kw">let </span>game = Arc::clone(<span class="kw-2">&amp;</span>game);
+<a href=#1049 id=1049 data-nosnippet>1049</a>        <span class="kw">move </span>|ctx: <span class="kw-2">&amp;mut </span>Ctx| {
+<a href=#1050 id=1050 data-nosnippet>1050</a>            <span class="kw">let </span>guard = game.lock().expect(<span class="string">"lock gry"</span>);
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(g) = guard.as_ref() {
+<a href=#1052 id=1052 data-nosnippet>1052</a>                draw_hud(ctx, g);
+<a href=#1053 id=1053 data-nosnippet>1053</a>            }
+<a href=#1054 id=1054 data-nosnippet>1054</a>        }
+<a href=#1055 id=1055 data-nosnippet>1055</a>    };
+<a href=#1056 id=1056 data-nosnippet>1056</a>
+<a href=#1057 id=1057 data-nosnippet>1057</a>    App::new()
+<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="comment">// Zrzut po 40 klatkach: tyle trzeba, żeby world mgły i cieni
+<a href=#1059 id=1059 data-nosnippet>1059</a>        // się ustabilizowały. Używany w testach regresji wizualnej
+<a href=#1060 id=1060 data-nosnippet>1060</a>        // (`FARM_SHOT=1 cargo run -p farm-simulator`).
+<a href=#1061 id=1061 data-nosnippet>1061</a>        </span>.screenshot(
+<a href=#1062 id=1062 data-nosnippet>1062</a>            std::env::var(<span class="string">"FARM_SHOT"</span>)
+<a href=#1063 id=1063 data-nosnippet>1063</a>                .ok()
+<a href=#1064 id=1064 data-nosnippet>1064</a>                .map(std::path::PathBuf::from),
+<a href=#1065 id=1065 data-nosnippet>1065</a>            <span class="number">40</span>,
+<a href=#1066 id=1066 data-nosnippet>1066</a>        )
+<a href=#1067 id=1067 data-nosnippet>1067</a>        .window(
+<a href=#1068 id=1068 data-nosnippet>1068</a>            windowed(<span class="number">1280</span>, <span class="number">720</span>)
+<a href=#1069 id=1069 data-nosnippet>1069</a>                .title(<span class="string">"Farm Simulator"</span>)
+<a href=#1070 id=1070 data-nosnippet>1070</a>                .background(<span class="number">0x94BDE6</span>)
+<a href=#1071 id=1071 data-nosnippet>1071</a>                .vsync(<span class="bool-val">true</span>)
+<a href=#1072 id=1072 data-nosnippet>1072</a>                .samples(<span class="number">1</span>)
+<a href=#1073 id=1073 data-nosnippet>1073</a>                <span class="comment">// Kursor ukryty: w pierwszej osobie mysz obraca kamerę,
+<a href=#1074 id=1074 data-nosnippet>1074</a>                // a wskazywanie w grze robi celownik rysowany w HUD.
+<a href=#1075 id=1075 data-nosnippet>1075</a>                </span>.cursor_visible(<span class="bool-val">false</span>)
+<a href=#1076 id=1076 data-nosnippet>1076</a>                <span class="comment">// ...i zablokowany w centrum okna. Bez `Locked` kursor
+<a href=#1077 id=1077 data-nosnippet>1077</a>                // ucieka do rogów — przy 75° FOV i czułości 0,0035
+<a href=#1078 id=1078 data-nosnippet>1078</a>                // kilka obrotów głowy wystarczy, żeby doszedł do
+<a href=#1079 id=1079 data-nosnippet>1079</a>                // ściany okna i sterowanie umarło.
+<a href=#1080 id=1080 data-nosnippet>1080</a>                </span>.cursor_locked(<span class="bool-val">true</span>)
+<a href=#1081 id=1081 data-nosnippet>1081</a>                <span class="comment">// Pełny ekran, ale NIE przy zrzucie: `FARM_SHOT` potrzebuje
+<a href=#1082 id=1082 data-nosnippet>1082</a>                // stałych 1280x720 do porównania piksel po pikselu, a
+<a href=#1083 id=1083 data-nosnippet>1083</a>                // fullscreen wziąłby rozmiar monitora. Dlatego zrzut
+<a href=#1084 id=1084 data-nosnippet>1084</a>                // świadomie rezygnuje z trybu pełnoekranowego.
+<a href=#1085 id=1085 data-nosnippet>1085</a>                </span>.fullscreen(std::env::var_os(<span class="string">"FARM_SHOT"</span>).is_none()),
+<a href=#1086 id=1086 data-nosnippet>1086</a>        )
+<a href=#1087 id=1087 data-nosnippet>1087</a>        .add_startup_system(setup_system)
+<a href=#1088 id=1088 data-nosnippet>1088</a>        .add_system(update_system)
+<a href=#1089 id=1089 data-nosnippet>1089</a>        .add_system(draw_system)
+<a href=#1090 id=1090 data-nosnippet>1090</a>        .run();
+<a href=#1091 id=1091 data-nosnippet>1091</a>}
+</code></pre></div></section></main></body></html>

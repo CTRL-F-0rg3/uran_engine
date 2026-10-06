@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ASSET_SUBDIR","BUILDINGS","FENCE_HEIGHT"],"fn":["asset_dir","available_buildings","load_building","model_path"],"struct":["BuildingSpec"]};

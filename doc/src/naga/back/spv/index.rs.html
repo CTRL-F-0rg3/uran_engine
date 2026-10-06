@@ -1,0 +1,422 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `/home/ctrl/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/naga-0.19.2/src/back/spv/index.rs`."><title>index.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="naga" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">naga/back/spv/</div>index.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">/*!
+<a href=#2 id=2 data-nosnippet>2</a>Bounds-checking for SPIR-V output.
+<a href=#3 id=3 data-nosnippet>3</a>*/
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use super</span>::{
+<a href=#6 id=6 data-nosnippet>6</a>    helpers::global_needs_wrapper, selection::Selection, Block, BlockContext, Error, IdGenerator,
+<a href=#7 id=7 data-nosnippet>7</a>    Instruction, Word,
+<a href=#8 id=8 data-nosnippet>8</a>};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use crate</span>::{arena::Handle, proc::BoundsCheckPolicy};
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// The results of performing a bounds check.
+<a href=#12 id=12 data-nosnippet>12</a>///
+<a href=#13 id=13 data-nosnippet>13</a>/// On success, `write_bounds_check` returns a value of this type.
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>BoundsCheckResult {
+<a href=#15 id=15 data-nosnippet>15</a>    <span class="doccomment">/// The index is statically known and in bounds, with the given value.
+<a href=#16 id=16 data-nosnippet>16</a>    </span>KnownInBounds(u32),
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// The given instruction computes the index to be used.
+<a href=#19 id=19 data-nosnippet>19</a>    </span>Computed(Word),
+<a href=#20 id=20 data-nosnippet>20</a>
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// The given instruction computes a boolean condition which is true
+<a href=#22 id=22 data-nosnippet>22</a>    /// if the index is in bounds.
+<a href=#23 id=23 data-nosnippet>23</a>    </span>Conditional(Word),
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// A value that we either know at translation time, or need to compute at runtime.
+<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>MaybeKnown&lt;T&gt; {
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// The value is known at shader translation time.
+<a href=#29 id=29 data-nosnippet>29</a>    </span>Known(T),
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="doccomment">/// The value is computed by the instruction with the given id.
+<a href=#32 id=32 data-nosnippet>32</a>    </span>Computed(Word),
+<a href=#33 id=33 data-nosnippet>33</a>}
+<a href=#34 id=34 data-nosnippet>34</a>
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">impl</span>&lt;<span class="lifetime">'w</span>&gt; BlockContext&lt;<span class="lifetime">'w</span>&gt; {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Emit code to compute the length of a run-time array.
+<a href=#37 id=37 data-nosnippet>37</a>    ///
+<a href=#38 id=38 data-nosnippet>38</a>    /// Given `array`, an expression referring a runtime-sized array, return the
+<a href=#39 id=39 data-nosnippet>39</a>    /// instruction id for the array's length.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_runtime_array_length(
+<a href=#41 id=41 data-nosnippet>41</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#42 id=42 data-nosnippet>42</a>        array: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#43 id=43 data-nosnippet>43</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#44 id=44 data-nosnippet>44</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Word, Error&gt; {
+<a href=#45 id=45 data-nosnippet>45</a>        <span class="comment">// Naga IR permits runtime-sized arrays as global variables or as the
+<a href=#46 id=46 data-nosnippet>46</a>        // final member of a struct that is a global variable. SPIR-V permits
+<a href=#47 id=47 data-nosnippet>47</a>        // only the latter, so this back end wraps bare runtime-sized arrays
+<a href=#48 id=48 data-nosnippet>48</a>        // in a made-up struct; see `helpers::global_needs_wrapper` and its uses.
+<a href=#49 id=49 data-nosnippet>49</a>        // This code must handle both cases.
+<a href=#50 id=50 data-nosnippet>50</a>        </span><span class="kw">let </span>(structure_id, last_member_index) = <span class="kw">match </span><span class="self">self</span>.ir_function.expressions[array] {
+<a href=#51 id=51 data-nosnippet>51</a>            <span class="kw">crate</span>::Expression::AccessIndex { base, index } =&gt; {
+<a href=#52 id=52 data-nosnippet>52</a>                <span class="kw">match </span><span class="self">self</span>.ir_function.expressions[base] {
+<a href=#53 id=53 data-nosnippet>53</a>                    <span class="kw">crate</span>::Expression::GlobalVariable(handle) =&gt; (
+<a href=#54 id=54 data-nosnippet>54</a>                        <span class="self">self</span>.writer.global_variables[handle.index()].access_id,
+<a href=#55 id=55 data-nosnippet>55</a>                        index,
+<a href=#56 id=56 data-nosnippet>56</a>                    ),
+<a href=#57 id=57 data-nosnippet>57</a>                    <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Validation(<span class="string">"array length expression"</span>)),
+<a href=#58 id=58 data-nosnippet>58</a>                }
+<a href=#59 id=59 data-nosnippet>59</a>            }
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">crate</span>::Expression::GlobalVariable(handle) =&gt; {
+<a href=#61 id=61 data-nosnippet>61</a>                <span class="kw">let </span>global = <span class="kw-2">&amp;</span><span class="self">self</span>.ir_module.global_variables[handle];
+<a href=#62 id=62 data-nosnippet>62</a>                <span class="kw">if </span>!global_needs_wrapper(<span class="self">self</span>.ir_module, global) {
+<a href=#63 id=63 data-nosnippet>63</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Validation(<span class="string">"array length expression"</span>));
+<a href=#64 id=64 data-nosnippet>64</a>                }
+<a href=#65 id=65 data-nosnippet>65</a>
+<a href=#66 id=66 data-nosnippet>66</a>                (<span class="self">self</span>.writer.global_variables[handle.index()].var_id, <span class="number">0</span>)
+<a href=#67 id=67 data-nosnippet>67</a>            }
+<a href=#68 id=68 data-nosnippet>68</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Validation(<span class="string">"array length expression"</span>)),
+<a href=#69 id=69 data-nosnippet>69</a>        };
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">let </span>length_id = <span class="self">self</span>.gen_id();
+<a href=#72 id=72 data-nosnippet>72</a>        block.body.push(Instruction::array_length(
+<a href=#73 id=73 data-nosnippet>73</a>            <span class="self">self</span>.writer.get_uint_type_id(),
+<a href=#74 id=74 data-nosnippet>74</a>            length_id,
+<a href=#75 id=75 data-nosnippet>75</a>            structure_id,
+<a href=#76 id=76 data-nosnippet>76</a>            last_member_index,
+<a href=#77 id=77 data-nosnippet>77</a>        ));
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="prelude-val">Ok</span>(length_id)
+<a href=#80 id=80 data-nosnippet>80</a>    }
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Compute the length of a subscriptable value.
+<a href=#83 id=83 data-nosnippet>83</a>    ///
+<a href=#84 id=84 data-nosnippet>84</a>    /// Given `sequence`, an expression referring to some indexable type, return
+<a href=#85 id=85 data-nosnippet>85</a>    /// its length. The result may either be computed by SPIR-V instructions, or
+<a href=#86 id=86 data-nosnippet>86</a>    /// known at shader translation time.
+<a href=#87 id=87 data-nosnippet>87</a>    ///
+<a href=#88 id=88 data-nosnippet>88</a>    /// `sequence` may be a `Vector`, `Matrix`, or `Array`, a `Pointer` to any
+<a href=#89 id=89 data-nosnippet>89</a>    /// of those, or a `ValuePointer`. An array may be fixed-size, dynamically
+<a href=#90 id=90 data-nosnippet>90</a>    /// sized, or use a specializable constant as its length.
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">fn </span>write_sequence_length(
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#93 id=93 data-nosnippet>93</a>        sequence: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#94 id=94 data-nosnippet>94</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#95 id=95 data-nosnippet>95</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;MaybeKnown&lt;u32&gt;, Error&gt; {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>sequence_ty = <span class="self">self</span>.fun_info[sequence].ty.inner_with(<span class="kw-2">&amp;</span><span class="self">self</span>.ir_module.types);
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">match </span>sequence_ty.indexable_length(<span class="self">self</span>.ir_module) {
+<a href=#98 id=98 data-nosnippet>98</a>            <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::proc::IndexableLength::Known(known_length)) =&gt; {
+<a href=#99 id=99 data-nosnippet>99</a>                <span class="prelude-val">Ok</span>(MaybeKnown::Known(known_length))
+<a href=#100 id=100 data-nosnippet>100</a>            }
+<a href=#101 id=101 data-nosnippet>101</a>            <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::proc::IndexableLength::Dynamic) =&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>                <span class="kw">let </span>length_id = <span class="self">self</span>.write_runtime_array_length(sequence, block)<span class="question-mark">?</span>;
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="prelude-val">Ok</span>(MaybeKnown::Computed(length_id))
+<a href=#104 id=104 data-nosnippet>104</a>            }
+<a href=#105 id=105 data-nosnippet>105</a>            <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#106 id=106 data-nosnippet>106</a>                <span class="macro">log::error!</span>(<span class="string">"Sequence length for {:?} failed: {}"</span>, sequence, err);
+<a href=#107 id=107 data-nosnippet>107</a>                <span class="prelude-val">Err</span>(Error::Validation(<span class="string">"indexable length"</span>))
+<a href=#108 id=108 data-nosnippet>108</a>            }
+<a href=#109 id=109 data-nosnippet>109</a>        }
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Compute the maximum valid index of a subscriptable value.
+<a href=#113 id=113 data-nosnippet>113</a>    ///
+<a href=#114 id=114 data-nosnippet>114</a>    /// Given `sequence`, an expression referring to some indexable type, return
+<a href=#115 id=115 data-nosnippet>115</a>    /// its maximum valid index - one less than its length. The result may
+<a href=#116 id=116 data-nosnippet>116</a>    /// either be computed, or known at shader translation time.
+<a href=#117 id=117 data-nosnippet>117</a>    ///
+<a href=#118 id=118 data-nosnippet>118</a>    /// `sequence` may be a `Vector`, `Matrix`, or `Array`, a `Pointer` to any
+<a href=#119 id=119 data-nosnippet>119</a>    /// of those, or a `ValuePointer`. An array may be fixed-size, dynamically
+<a href=#120 id=120 data-nosnippet>120</a>    /// sized, or use a specializable constant as its length.
+<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">fn </span>write_sequence_max_index(
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#123 id=123 data-nosnippet>123</a>        sequence: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#124 id=124 data-nosnippet>124</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#125 id=125 data-nosnippet>125</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;MaybeKnown&lt;u32&gt;, Error&gt; {
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">match </span><span class="self">self</span>.write_sequence_length(sequence, block)<span class="question-mark">? </span>{
+<a href=#127 id=127 data-nosnippet>127</a>            MaybeKnown::Known(known_length) =&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>                <span class="comment">// We should have thrown out all attempts to subscript zero-length
+<a href=#129 id=129 data-nosnippet>129</a>                // sequences during validation, so the following subtraction should never
+<a href=#130 id=130 data-nosnippet>130</a>                // underflow.
+<a href=#131 id=131 data-nosnippet>131</a>                </span><span class="macro">assert!</span>(known_length &gt; <span class="number">0</span>);
+<a href=#132 id=132 data-nosnippet>132</a>                <span class="comment">// Compute the max index from the length now.
+<a href=#133 id=133 data-nosnippet>133</a>                </span><span class="prelude-val">Ok</span>(MaybeKnown::Known(known_length - <span class="number">1</span>))
+<a href=#134 id=134 data-nosnippet>134</a>            }
+<a href=#135 id=135 data-nosnippet>135</a>            MaybeKnown::Computed(length_id) =&gt; {
+<a href=#136 id=136 data-nosnippet>136</a>                <span class="comment">// Emit code to compute the max index from the length.
+<a href=#137 id=137 data-nosnippet>137</a>                </span><span class="kw">let </span>const_one_id = <span class="self">self</span>.get_index_constant(<span class="number">1</span>);
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">let </span>max_index_id = <span class="self">self</span>.gen_id();
+<a href=#139 id=139 data-nosnippet>139</a>                block.body.push(Instruction::binary(
+<a href=#140 id=140 data-nosnippet>140</a>                    spirv::Op::ISub,
+<a href=#141 id=141 data-nosnippet>141</a>                    <span class="self">self</span>.writer.get_uint_type_id(),
+<a href=#142 id=142 data-nosnippet>142</a>                    max_index_id,
+<a href=#143 id=143 data-nosnippet>143</a>                    length_id,
+<a href=#144 id=144 data-nosnippet>144</a>                    const_one_id,
+<a href=#145 id=145 data-nosnippet>145</a>                ));
+<a href=#146 id=146 data-nosnippet>146</a>                <span class="prelude-val">Ok</span>(MaybeKnown::Computed(max_index_id))
+<a href=#147 id=147 data-nosnippet>147</a>            }
+<a href=#148 id=148 data-nosnippet>148</a>        }
+<a href=#149 id=149 data-nosnippet>149</a>    }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// Restrict an index to be in range for a vector, matrix, or array.
+<a href=#152 id=152 data-nosnippet>152</a>    ///
+<a href=#153 id=153 data-nosnippet>153</a>    /// This is used to implement `BoundsCheckPolicy::Restrict`. An in-bounds
+<a href=#154 id=154 data-nosnippet>154</a>    /// index is left unchanged. An out-of-bounds index is replaced with some
+<a href=#155 id=155 data-nosnippet>155</a>    /// arbitrary in-bounds index. Note,this is not necessarily clamping; for
+<a href=#156 id=156 data-nosnippet>156</a>    /// example, negative indices might be changed to refer to the last element
+<a href=#157 id=157 data-nosnippet>157</a>    /// of the sequence, not the first, as clamping would do.
+<a href=#158 id=158 data-nosnippet>158</a>    ///
+<a href=#159 id=159 data-nosnippet>159</a>    /// Either return the restricted index value, if known, or add instructions
+<a href=#160 id=160 data-nosnippet>160</a>    /// to `block` to compute it, and return the id of the result. See the
+<a href=#161 id=161 data-nosnippet>161</a>    /// documentation for `BoundsCheckResult` for details.
+<a href=#162 id=162 data-nosnippet>162</a>    ///
+<a href=#163 id=163 data-nosnippet>163</a>    /// The `sequence` expression may be a `Vector`, `Matrix`, or `Array`, a
+<a href=#164 id=164 data-nosnippet>164</a>    /// `Pointer` to any of those, or a `ValuePointer`. An array may be
+<a href=#165 id=165 data-nosnippet>165</a>    /// fixed-size, dynamically sized, or use a specializable constant as its
+<a href=#166 id=166 data-nosnippet>166</a>    /// length.
+<a href=#167 id=167 data-nosnippet>167</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_restricted_index(
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#169 id=169 data-nosnippet>169</a>        sequence: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#170 id=170 data-nosnippet>170</a>        index: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#171 id=171 data-nosnippet>171</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#172 id=172 data-nosnippet>172</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BoundsCheckResult, Error&gt; {
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>index_id = <span class="self">self</span>.cached[index];
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="comment">// Get the sequence's maximum valid index. Return early if we've already
+<a href=#176 id=176 data-nosnippet>176</a>        // done the bounds check.
+<a href=#177 id=177 data-nosnippet>177</a>        </span><span class="kw">let </span>max_index_id = <span class="kw">match </span><span class="self">self</span>.write_sequence_max_index(sequence, block)<span class="question-mark">? </span>{
+<a href=#178 id=178 data-nosnippet>178</a>            MaybeKnown::Known(known_max_index) =&gt; {
+<a href=#179 id=179 data-nosnippet>179</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(known_index) = <span class="self">self
+<a href=#180 id=180 data-nosnippet>180</a>                    </span>.ir_module
+<a href=#181 id=181 data-nosnippet>181</a>                    .to_ctx()
+<a href=#182 id=182 data-nosnippet>182</a>                    .eval_expr_to_u32_from(index, <span class="kw-2">&amp;</span><span class="self">self</span>.ir_function.expressions)
+<a href=#183 id=183 data-nosnippet>183</a>                {
+<a href=#184 id=184 data-nosnippet>184</a>                    <span class="comment">// Both the index and length are known at compile time.
+<a href=#185 id=185 data-nosnippet>185</a>                    //
+<a href=#186 id=186 data-nosnippet>186</a>                    // In strict WGSL compliance mode, out-of-bounds indices cannot be
+<a href=#187 id=187 data-nosnippet>187</a>                    // reported at shader translation time, and must be replaced with
+<a href=#188 id=188 data-nosnippet>188</a>                    // in-bounds indices at run time. So we cannot assume that
+<a href=#189 id=189 data-nosnippet>189</a>                    // validation ensured the index was in bounds. Restrict now.
+<a href=#190 id=190 data-nosnippet>190</a>                    </span><span class="kw">let </span>restricted = std::cmp::min(known_index, known_max_index);
+<a href=#191 id=191 data-nosnippet>191</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(BoundsCheckResult::KnownInBounds(restricted));
+<a href=#192 id=192 data-nosnippet>192</a>                }
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a>                <span class="self">self</span>.get_index_constant(known_max_index)
+<a href=#195 id=195 data-nosnippet>195</a>            }
+<a href=#196 id=196 data-nosnippet>196</a>            MaybeKnown::Computed(max_index_id) =&gt; max_index_id,
+<a href=#197 id=197 data-nosnippet>197</a>        };
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="comment">// One or the other of the index or length is dynamic, so emit code for
+<a href=#200 id=200 data-nosnippet>200</a>        // BoundsCheckPolicy::Restrict.
+<a href=#201 id=201 data-nosnippet>201</a>        </span><span class="kw">let </span>restricted_index_id = <span class="self">self</span>.gen_id();
+<a href=#202 id=202 data-nosnippet>202</a>        block.body.push(Instruction::ext_inst(
+<a href=#203 id=203 data-nosnippet>203</a>            <span class="self">self</span>.writer.gl450_ext_inst_id,
+<a href=#204 id=204 data-nosnippet>204</a>            spirv::GLOp::UMin,
+<a href=#205 id=205 data-nosnippet>205</a>            <span class="self">self</span>.writer.get_uint_type_id(),
+<a href=#206 id=206 data-nosnippet>206</a>            restricted_index_id,
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="kw-2">&amp;</span>[index_id, max_index_id],
+<a href=#208 id=208 data-nosnippet>208</a>        ));
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="prelude-val">Ok</span>(BoundsCheckResult::Computed(restricted_index_id))
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Write an index bounds comparison to `block`, if needed.
+<a href=#213 id=213 data-nosnippet>213</a>    ///
+<a href=#214 id=214 data-nosnippet>214</a>    /// If we're able to determine statically that `index` is in bounds for
+<a href=#215 id=215 data-nosnippet>215</a>    /// `sequence`, return `KnownInBounds(value)`, where `value` is the actual
+<a href=#216 id=216 data-nosnippet>216</a>    /// value of the index. (In principle, one could know that the index is in
+<a href=#217 id=217 data-nosnippet>217</a>    /// bounds without knowing its specific value, but in our simple-minded
+<a href=#218 id=218 data-nosnippet>218</a>    /// situation, we always know it.)
+<a href=#219 id=219 data-nosnippet>219</a>    ///
+<a href=#220 id=220 data-nosnippet>220</a>    /// If instead we must generate code to perform the comparison at run time,
+<a href=#221 id=221 data-nosnippet>221</a>    /// return `Conditional(comparison_id)`, where `comparison_id` is an
+<a href=#222 id=222 data-nosnippet>222</a>    /// instruction producing a boolean value that is true if `index` is in
+<a href=#223 id=223 data-nosnippet>223</a>    /// bounds for `sequence`.
+<a href=#224 id=224 data-nosnippet>224</a>    ///
+<a href=#225 id=225 data-nosnippet>225</a>    /// The `sequence` expression may be a `Vector`, `Matrix`, or `Array`, a
+<a href=#226 id=226 data-nosnippet>226</a>    /// `Pointer` to any of those, or a `ValuePointer`. An array may be
+<a href=#227 id=227 data-nosnippet>227</a>    /// fixed-size, dynamically sized, or use a specializable constant as its
+<a href=#228 id=228 data-nosnippet>228</a>    /// length.
+<a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">fn </span>write_index_comparison(
+<a href=#230 id=230 data-nosnippet>230</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#231 id=231 data-nosnippet>231</a>        sequence: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#232 id=232 data-nosnippet>232</a>        index: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#233 id=233 data-nosnippet>233</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#234 id=234 data-nosnippet>234</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BoundsCheckResult, Error&gt; {
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>index_id = <span class="self">self</span>.cached[index];
+<a href=#236 id=236 data-nosnippet>236</a>
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="comment">// Get the sequence's length. Return early if we've already done the
+<a href=#238 id=238 data-nosnippet>238</a>        // bounds check.
+<a href=#239 id=239 data-nosnippet>239</a>        </span><span class="kw">let </span>length_id = <span class="kw">match </span><span class="self">self</span>.write_sequence_length(sequence, block)<span class="question-mark">? </span>{
+<a href=#240 id=240 data-nosnippet>240</a>            MaybeKnown::Known(known_length) =&gt; {
+<a href=#241 id=241 data-nosnippet>241</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(known_index) = <span class="self">self
+<a href=#242 id=242 data-nosnippet>242</a>                    </span>.ir_module
+<a href=#243 id=243 data-nosnippet>243</a>                    .to_ctx()
+<a href=#244 id=244 data-nosnippet>244</a>                    .eval_expr_to_u32_from(index, <span class="kw-2">&amp;</span><span class="self">self</span>.ir_function.expressions)
+<a href=#245 id=245 data-nosnippet>245</a>                {
+<a href=#246 id=246 data-nosnippet>246</a>                    <span class="comment">// Both the index and length are known at compile time.
+<a href=#247 id=247 data-nosnippet>247</a>                    //
+<a href=#248 id=248 data-nosnippet>248</a>                    // It would be nice to assume that, since we are using the
+<a href=#249 id=249 data-nosnippet>249</a>                    // `ReadZeroSkipWrite` policy, we are not in strict WGSL
+<a href=#250 id=250 data-nosnippet>250</a>                    // compliance mode, and thus we can count on the validator to have
+<a href=#251 id=251 data-nosnippet>251</a>                    // rejected any programs with known out-of-bounds indices, and
+<a href=#252 id=252 data-nosnippet>252</a>                    // thus just return `KnownInBounds` here without actually
+<a href=#253 id=253 data-nosnippet>253</a>                    // checking.
+<a href=#254 id=254 data-nosnippet>254</a>                    //
+<a href=#255 id=255 data-nosnippet>255</a>                    // But it's also reasonable to expect that bounds check policies
+<a href=#256 id=256 data-nosnippet>256</a>                    // and error reporting policies should be able to vary
+<a href=#257 id=257 data-nosnippet>257</a>                    // independently without introducing security holes. So, we should
+<a href=#258 id=258 data-nosnippet>258</a>                    // support the case where bad indices do not cause validation
+<a href=#259 id=259 data-nosnippet>259</a>                    // errors, and are handled via `ReadZeroSkipWrite`.
+<a href=#260 id=260 data-nosnippet>260</a>                    //
+<a href=#261 id=261 data-nosnippet>261</a>                    // In theory, when `known_index` is bad, we could return a new
+<a href=#262 id=262 data-nosnippet>262</a>                    // `KnownOutOfBounds` variant here. But it's simpler just to fall
+<a href=#263 id=263 data-nosnippet>263</a>                    // through and let the bounds check take place. The shader is
+<a href=#264 id=264 data-nosnippet>264</a>                    // broken anyway, so it doesn't make sense to invest in emitting
+<a href=#265 id=265 data-nosnippet>265</a>                    // the ideal code for it.
+<a href=#266 id=266 data-nosnippet>266</a>                    </span><span class="kw">if </span>known_index &lt; known_length {
+<a href=#267 id=267 data-nosnippet>267</a>                        <span class="kw">return </span><span class="prelude-val">Ok</span>(BoundsCheckResult::KnownInBounds(known_index));
+<a href=#268 id=268 data-nosnippet>268</a>                    }
+<a href=#269 id=269 data-nosnippet>269</a>                }
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>                <span class="self">self</span>.get_index_constant(known_length)
+<a href=#272 id=272 data-nosnippet>272</a>            }
+<a href=#273 id=273 data-nosnippet>273</a>            MaybeKnown::Computed(length_id) =&gt; length_id,
+<a href=#274 id=274 data-nosnippet>274</a>        };
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="comment">// Compare the index against the length.
+<a href=#277 id=277 data-nosnippet>277</a>        </span><span class="kw">let </span>condition_id = <span class="self">self</span>.gen_id();
+<a href=#278 id=278 data-nosnippet>278</a>        block.body.push(Instruction::binary(
+<a href=#279 id=279 data-nosnippet>279</a>            spirv::Op::ULessThan,
+<a href=#280 id=280 data-nosnippet>280</a>            <span class="self">self</span>.writer.get_bool_type_id(),
+<a href=#281 id=281 data-nosnippet>281</a>            condition_id,
+<a href=#282 id=282 data-nosnippet>282</a>            index_id,
+<a href=#283 id=283 data-nosnippet>283</a>            length_id,
+<a href=#284 id=284 data-nosnippet>284</a>        ));
+<a href=#285 id=285 data-nosnippet>285</a>
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="comment">// Indicate that we did generate the check.
+<a href=#287 id=287 data-nosnippet>287</a>        </span><span class="prelude-val">Ok</span>(BoundsCheckResult::Conditional(condition_id))
+<a href=#288 id=288 data-nosnippet>288</a>    }
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// Emit a conditional load for `BoundsCheckPolicy::ReadZeroSkipWrite`.
+<a href=#291 id=291 data-nosnippet>291</a>    ///
+<a href=#292 id=292 data-nosnippet>292</a>    /// Generate code to load a value of `result_type` if `condition` is true,
+<a href=#293 id=293 data-nosnippet>293</a>    /// and generate a null value of that type if it is false. Call `emit_load`
+<a href=#294 id=294 data-nosnippet>294</a>    /// to emit the instructions to perform the load. Return the id of the
+<a href=#295 id=295 data-nosnippet>295</a>    /// merged value of the two branches.
+<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_conditional_indexed_load&lt;F&gt;(
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#298 id=298 data-nosnippet>298</a>        result_type: Word,
+<a href=#299 id=299 data-nosnippet>299</a>        condition: Word,
+<a href=#300 id=300 data-nosnippet>300</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#301 id=301 data-nosnippet>301</a>        emit_load: F,
+<a href=#302 id=302 data-nosnippet>302</a>    ) -&gt; Word
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">where
+<a href=#304 id=304 data-nosnippet>304</a>        </span>F: FnOnce(<span class="kw-2">&amp;mut </span>IdGenerator, <span class="kw-2">&amp;mut </span>Block) -&gt; Word,
+<a href=#305 id=305 data-nosnippet>305</a>    {
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="comment">// For the out-of-bounds case, we produce a zero value.
+<a href=#307 id=307 data-nosnippet>307</a>        </span><span class="kw">let </span>null_id = <span class="self">self</span>.writer.get_constant_null(result_type);
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span><span class="kw-2">mut </span>selection = Selection::start(block, result_type);
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="comment">// As it turns out, we don't actually need a full 'if-then-else'
+<a href=#312 id=312 data-nosnippet>312</a>        // structure for this: SPIR-V constants are declared up front, so the
+<a href=#313 id=313 data-nosnippet>313</a>        // 'else' block would have no instructions. Instead we emit something
+<a href=#314 id=314 data-nosnippet>314</a>        // like this:
+<a href=#315 id=315 data-nosnippet>315</a>        //
+<a href=#316 id=316 data-nosnippet>316</a>        //     result = zero;
+<a href=#317 id=317 data-nosnippet>317</a>        //     if in_bounds {
+<a href=#318 id=318 data-nosnippet>318</a>        //         result = do the load;
+<a href=#319 id=319 data-nosnippet>319</a>        //     }
+<a href=#320 id=320 data-nosnippet>320</a>        //     use result;
+<a href=#321 id=321 data-nosnippet>321</a>
+<a href=#322 id=322 data-nosnippet>322</a>        // Continue only if the index was in bounds. Otherwise, branch to the
+<a href=#323 id=323 data-nosnippet>323</a>        // merge block.
+<a href=#324 id=324 data-nosnippet>324</a>        </span>selection.if_true(<span class="self">self</span>, condition, null_id);
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="comment">// The in-bounds path. Perform the access and the load.
+<a href=#327 id=327 data-nosnippet>327</a>        </span><span class="kw">let </span>loaded_value = emit_load(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer.id_gen, selection.block());
+<a href=#328 id=328 data-nosnippet>328</a>
+<a href=#329 id=329 data-nosnippet>329</a>        selection.finish(<span class="self">self</span>, loaded_value)
+<a href=#330 id=330 data-nosnippet>330</a>    }
+<a href=#331 id=331 data-nosnippet>331</a>
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="doccomment">/// Emit code for bounds checks for an array, vector, or matrix access.
+<a href=#333 id=333 data-nosnippet>333</a>    ///
+<a href=#334 id=334 data-nosnippet>334</a>    /// This implements either `index_bounds_check_policy` or
+<a href=#335 id=335 data-nosnippet>335</a>    /// `buffer_bounds_check_policy`, depending on the address space of the
+<a href=#336 id=336 data-nosnippet>336</a>    /// pointer being accessed.
+<a href=#337 id=337 data-nosnippet>337</a>    ///
+<a href=#338 id=338 data-nosnippet>338</a>    /// Return a `BoundsCheckResult` indicating how the index should be
+<a href=#339 id=339 data-nosnippet>339</a>    /// consumed. See that type's documentation for details.
+<a href=#340 id=340 data-nosnippet>340</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_bounds_check(
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#342 id=342 data-nosnippet>342</a>        base: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#343 id=343 data-nosnippet>343</a>        index: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#344 id=344 data-nosnippet>344</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#345 id=345 data-nosnippet>345</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BoundsCheckResult, Error&gt; {
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>policy = <span class="self">self</span>.writer.bounds_check_policies.choose_policy(
+<a href=#347 id=347 data-nosnippet>347</a>            base,
+<a href=#348 id=348 data-nosnippet>348</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.ir_module.types,
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="self">self</span>.fun_info,
+<a href=#350 id=350 data-nosnippet>350</a>        );
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span>policy {
+<a href=#353 id=353 data-nosnippet>353</a>            BoundsCheckPolicy::Restrict =&gt; <span class="self">self</span>.write_restricted_index(base, index, block)<span class="question-mark">?</span>,
+<a href=#354 id=354 data-nosnippet>354</a>            BoundsCheckPolicy::ReadZeroSkipWrite =&gt; {
+<a href=#355 id=355 data-nosnippet>355</a>                <span class="self">self</span>.write_index_comparison(base, index, block)<span class="question-mark">?
+<a href=#356 id=356 data-nosnippet>356</a>            </span>}
+<a href=#357 id=357 data-nosnippet>357</a>            BoundsCheckPolicy::Unchecked =&gt; BoundsCheckResult::Computed(<span class="self">self</span>.cached[index]),
+<a href=#358 id=358 data-nosnippet>358</a>        })
+<a href=#359 id=359 data-nosnippet>359</a>    }
+<a href=#360 id=360 data-nosnippet>360</a>
+<a href=#361 id=361 data-nosnippet>361</a>    <span class="doccomment">/// Emit code to subscript a vector by value with a computed index.
+<a href=#362 id=362 data-nosnippet>362</a>    ///
+<a href=#363 id=363 data-nosnippet>363</a>    /// Return the id of the element value.
+<a href=#364 id=364 data-nosnippet>364</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_vector_access(
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#366 id=366 data-nosnippet>366</a>        expr_handle: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#367 id=367 data-nosnippet>367</a>        base: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#368 id=368 data-nosnippet>368</a>        index: Handle&lt;<span class="kw">crate</span>::Expression&gt;,
+<a href=#369 id=369 data-nosnippet>369</a>        block: <span class="kw-2">&amp;mut </span>Block,
+<a href=#370 id=370 data-nosnippet>370</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Word, Error&gt; {
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="kw">let </span>result_type_id = <span class="self">self</span>.get_expression_type_id(<span class="kw-2">&amp;</span><span class="self">self</span>.fun_info[expr_handle].ty);
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">let </span>base_id = <span class="self">self</span>.cached[base];
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>index_id = <span class="self">self</span>.cached[index];
+<a href=#375 id=375 data-nosnippet>375</a>
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>result_id = <span class="kw">match </span><span class="self">self</span>.write_bounds_check(base, index, block)<span class="question-mark">? </span>{
+<a href=#377 id=377 data-nosnippet>377</a>            BoundsCheckResult::KnownInBounds(known_index) =&gt; {
+<a href=#378 id=378 data-nosnippet>378</a>                <span class="kw">let </span>result_id = <span class="self">self</span>.gen_id();
+<a href=#379 id=379 data-nosnippet>379</a>                block.body.push(Instruction::composite_extract(
+<a href=#380 id=380 data-nosnippet>380</a>                    result_type_id,
+<a href=#381 id=381 data-nosnippet>381</a>                    result_id,
+<a href=#382 id=382 data-nosnippet>382</a>                    base_id,
+<a href=#383 id=383 data-nosnippet>383</a>                    <span class="kw-2">&amp;</span>[known_index],
+<a href=#384 id=384 data-nosnippet>384</a>                ));
+<a href=#385 id=385 data-nosnippet>385</a>                result_id
+<a href=#386 id=386 data-nosnippet>386</a>            }
+<a href=#387 id=387 data-nosnippet>387</a>            BoundsCheckResult::Computed(computed_index_id) =&gt; {
+<a href=#388 id=388 data-nosnippet>388</a>                <span class="kw">let </span>result_id = <span class="self">self</span>.gen_id();
+<a href=#389 id=389 data-nosnippet>389</a>                block.body.push(Instruction::vector_extract_dynamic(
+<a href=#390 id=390 data-nosnippet>390</a>                    result_type_id,
+<a href=#391 id=391 data-nosnippet>391</a>                    result_id,
+<a href=#392 id=392 data-nosnippet>392</a>                    base_id,
+<a href=#393 id=393 data-nosnippet>393</a>                    computed_index_id,
+<a href=#394 id=394 data-nosnippet>394</a>                ));
+<a href=#395 id=395 data-nosnippet>395</a>                result_id
+<a href=#396 id=396 data-nosnippet>396</a>            }
+<a href=#397 id=397 data-nosnippet>397</a>            BoundsCheckResult::Conditional(comparison_id) =&gt; {
+<a href=#398 id=398 data-nosnippet>398</a>                <span class="comment">// Run-time bounds checks were required. Emit
+<a href=#399 id=399 data-nosnippet>399</a>                // conditional load.
+<a href=#400 id=400 data-nosnippet>400</a>                </span><span class="self">self</span>.write_conditional_indexed_load(
+<a href=#401 id=401 data-nosnippet>401</a>                    result_type_id,
+<a href=#402 id=402 data-nosnippet>402</a>                    comparison_id,
+<a href=#403 id=403 data-nosnippet>403</a>                    block,
+<a href=#404 id=404 data-nosnippet>404</a>                    |id_gen, block| {
+<a href=#405 id=405 data-nosnippet>405</a>                        <span class="comment">// The in-bounds path. Generate the access.
+<a href=#406 id=406 data-nosnippet>406</a>                        </span><span class="kw">let </span>element_id = id_gen.next();
+<a href=#407 id=407 data-nosnippet>407</a>                        block.body.push(Instruction::vector_extract_dynamic(
+<a href=#408 id=408 data-nosnippet>408</a>                            result_type_id,
+<a href=#409 id=409 data-nosnippet>409</a>                            element_id,
+<a href=#410 id=410 data-nosnippet>410</a>                            base_id,
+<a href=#411 id=411 data-nosnippet>411</a>                            index_id,
+<a href=#412 id=412 data-nosnippet>412</a>                        ));
+<a href=#413 id=413 data-nosnippet>413</a>                        element_id
+<a href=#414 id=414 data-nosnippet>414</a>                    },
+<a href=#415 id=415 data-nosnippet>415</a>                )
+<a href=#416 id=416 data-nosnippet>416</a>            }
+<a href=#417 id=417 data-nosnippet>417</a>        };
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="prelude-val">Ok</span>(result_id)
+<a href=#420 id=420 data-nosnippet>420</a>    }
+<a href=#421 id=421 data-nosnippet>421</a>}
+</code></pre></div></section></main></body></html>

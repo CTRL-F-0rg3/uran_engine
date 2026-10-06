@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CHARGE_SPEED","PHASE_COUNT","WINDUP_TIME"],"enum":["Attack"],"fn":["spawn"],"struct":["Boss","BossConfig","Rng"]};

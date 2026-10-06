@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ATTACK_COOLDOWN","FONT_FALLBACKS","HURT_COOLDOWN","MAX_BULLETS","PLAYER_DAMAGE","PLAYER_DRAW_SCALE","PLAYER_MAX_HP","WORLD"],"fn":["build_arena","draw","draw_boss","draw_hud","draw_player","draw_tiles","main","screenshot_path","setup","shake_offset","update"],"mod":["boss","player","projectile","tilemap"],"struct":["Game"]};

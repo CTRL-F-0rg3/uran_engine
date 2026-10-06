@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CROPS_ASSET","DAY_LENGTH","DECOR_FENCE","FARMER_ASSET","FONT_FALLBACKS","GROUND_TILLED","MAP_PATH","MAX_ENERGY","START_GOLD","WALK_SPEED","WORLD_SCALE"],"enum":["Tool"],"fn":["ascii","draw","draw_crops","draw_hud","draw_player","main","screenshot_path","setup","update"],"mod":["farm","player"],"struct":["Game","Message"]};
