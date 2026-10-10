@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uran Engine — dokumentacja</title>
+<style>
+  :root {
+    --bg:#0d1117; --bg2:#161b22; --bg3:#1f2530; --border:#2d333b;
+    --text:#d4dae6; --muted:#8b94a6; --accent:#39c6ff; --accent2:#7ce7a8;
+    --warn:#f0b34c; --code-bg:#10151c;
+    --mono:"JetBrains Mono","Fira Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.6;font-size:15px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .layout{display:flex}
+  .sidebar{width:280px;min-width:280px;height:100vh;position:sticky;top:0;overflow-y:auto;
+    background:var(--bg2);border-right:1px solid var(--border);padding:22px 18px}
+  .sidebar h1{font-size:17px;margin:0 0 4px}
+  .sidebar .ver{color:var(--muted);font-size:12px;margin-bottom:20px}
+  .sidebar nav a{display:block;color:var(--muted);padding:6px 10px;border-radius:6px;
+    margin:1px 0;font-size:13.5px}
+  .sidebar nav a:hover{color:var(--text);background:var(--bg3);text-decoration:none}
+  .sidebar nav .group{color:var(--accent);font-size:11px;text-transform:uppercase;
+    letter-spacing:1px;margin:18px 0 4px}
+  .content{flex:1;max-width:900px;padding:40px 48px 80px}
+  h2{font-size:26px;border-bottom:1px solid var(--border);padding-bottom:8px;margin-top:48px}
+  h3{font-size:19px;margin-top:32px}
+  h4{font-size:16px;margin-top:24px;color:var(--accent2)}
+  .lead{font-size:16.5px;color:var(--muted)}
+  code{font-family:var(--mono);background:var(--code-bg);border:1px solid var(--border);
+    border-radius:4px;padding:1px 5px;font-size:13px}
+  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+    padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.5}
+  pre code{background:none;border:none;padding:0}
+  pre .c{color:#6a737d} pre .k{color:#ff7b72} pre .s{color:#a5d6ff}
+  pre .f{color:#d2a8ff} pre .t{color:#7ee787}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--bg2);color:var(--accent2)}
+  td code{font-size:12.5px}
+  .note,.tip,.warn{border-radius:8px;padding:12px 16px;margin:16px 0;border-left:4px solid}
+  .note{background:#10222e;border-color:var(--accent)}
+  .tip{background:#112a1f;border-color:var(--accent2)}
+  .warn{background:#2e2010;border-color:var(--warn)}
+  .note b,.tip b,.warn b{display:block;margin-bottom:2px}
+  kbd{background:var(--bg3);border:1px solid var(--border);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-family:var(--mono);font-size:12px}
+  @media (max-width:860px){
+    .layout{flex-direction:column}
+    .sidebar{width:100%;min-width:0;height:auto;position:static;border-right:none;border-bottom:1px solid var(--border)}
+    .content{padding:24px 18px 60px}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <h1>⚛ Uran Engine</h1>
+  <div class="ver">silnik 2D (wgpu) — dokumentacja użytkowania</div>
+  <nav>
+    <a href="#przeglad">Przegląd</a>
+    <a href="#szybki-start">Szybki start</a>
+    <a href="#struktura">Struktura projektu</a>
+    <div class="group">Rdzeń</div>
+    <a href="#app">App i cykl życia</a>
+    <a href="#ctx">Kontekst klatki (Ctx)</a>
+    <a href="#rysowanie">Rysowanie (Graphics)</a>
+    <a href="#wejscie">Wejście (Input)</a>
+    <a href="#kamera">Kamera 2D</a>
+    <a href="#asset">Assety</a>
+    <a href="#ecs">ECS (World)</a>
+    <div class="group">Świat i mapy</div>
+    <a href="#tilemap">Tilemapa</a>
+    <a href="#xml">Format XML mapy</a>
+    <a href="#edytor">Edytor map</a>
+    <div class="group">Elementy gry</div>
+    <a href="#elementy">Elementy (object/init/data)</a>
+    <a href="#skroty">Ściąga skrótów</a>
+  </nav>
+</aside>
+<main class="content">
+<section id="przeglad">
+  <h2>Przegląd</h2>
+  <p class="lead">Uran Engine to niewielki silnik 2D napisany w <b>Rust</b>, zbudowany na
+  <code>wgpu</code> (render) i <code>winit</code> (okno). Łączy w jednej fasadzie:
+  okno, ECS, wejście, rysowanie natychmiastowe i tilemapy.</p>
+  <p>Silnik dzieli się na małe crate'y w workspace:</p>
+  <table>
+    <tr><th>Crate</th><th>Rola</th></tr>
+    <tr><td><code>uran-math</code></td><td>Wektory (glam), <code>Color</code>, <code>Rect</code>.</td></tr>
+    <tr><td><code>uran-core</code></td><td>Okno (<code>windowed</code>), czas, wejście (<code>Input</code>, <code>Key</code>).</td></tr>
+    <tr><td><code>uran-asset</code></td><td>Ładowanie obrazów/czcionek, cache po ścieżce, <code>find_asset_dir</code>.</td></tr>
+    <tr><td><code>uran-ecs</code></td><td>Świat ECS (hecs) + komponenty graficzne (Sprite, Mesh…).</td></tr>
+    <tr><td><code>uran-render</code></td><td>Rysowanie 2D (batching), kamera, tekst, tekstury, postfx.</td></tr>
+    <tr><td><code>uran-tilemap</code></td><td>Mapy kafli: warstwy, tilesety, autotiling, kolizje, XML.</td></tr>
+    <tr><td><code>uran-engine</code></td><td><b>Fasada</b> — jeden <code>use uran_engine::prelude::*;</code> daje całość.</td></tr>
+  </table>
+  <p>Do silnika dołączone są dwa narzędzia:</p>
+  <ul>
+    <li><code>uran</code> (CLI) — tworzy projekty i elementy gry z terminala.</li>
+    <li><code>uran-editor</code> — graficzny edytor map kafli.</li>
+  </ul>
+</section>
+
+<section id="szybki-start">
+  <h2>Szybki start</h2>
+  <p>Pracę zaczynasz od narzędzia <code>uran</code>, które działa jak
+  <code>cargo new nazwa --bin</code>, ale dodatkowo kopiuje silnik:</p>
+<pre><code><span class="c"># z katalogu silnika (uran_engine/)</span>
+cargo run -p uran-cli -- new moja-gra --engine .
+
+<span class="c"># albo po zbudowaniu</span>
+cargo build -p uran-cli
+./target/debug/uran new moja-gra --engine . --at ~/gry</code></pre>
+  <p>Powstaje katalog <code>moja-gra/</code> z gotowym projektem:</p>
+<pre><code>moja-gra/
+├── Cargo.toml          <span class="c"># zależność: uran-engine = { path = "engine/uran-engine" }</span>
+├── engine/             <span class="c"># skopiowany silnik (samodzielny workspace)</span>
+├── assets/
+│   └── maps/
+└── src/
+    ├── main.rs         <span class="c"># punkt wejścia: App + okno</span>
+    ├── object.rs       <span class="c"># centralny rejestr obiektów</span>
+    ├── init.rs         <span class="c"># centralna inicjalizacja</span>
+    └── elements/
+        └── mod.rs      <span class="c"># rejestr elementów gry</span></code></pre>
+  <p>Uruchamiasz grę standardowo:</p>
+<pre><code>cd moja-gra
+cargo run</code></pre>
+</section>
+
+<section id="struktura">
+  <h2>Struktura projektu</h2>
+  <p>Wygenerowany projekt dzieli grę na trzy warstwy:</p>
+  <ul>
+    <li><b><code>src/main.rs</code></b> — tworzy <code>App</code>, okno i podpina
+        <code>init</code> (raz) oraz <code>object</code> (co klatkę).</li>
+    <li><b><code>src/init.rs</code> / <code>src/object.rs</code></b> — centralne punkty,
+        które wywołują <code>init</code> / <code>update</code> każdego elementu.</li>
+    <li><b><code>src/elements/&lt;nazwa&gt;/</code></b> — pojedynczy element gry
+        (<code>object.rs</code>, <code>init.rs</code> i skrypty <code>data/</code>).</li>
+  </ul>
+  <div class="tip"><b>Zasada</b>Logikę trzymasz w skryptach elementu. Pliki centralne
+  (<code>object.rs</code>/<code>init.rs</code>) tylko je spinają — dlatego dodawanie
+  nowego elementu to jedno polecenie, bez grzebania w pętli głównej.</div>
+</section>
+<section id="app">
+  <h2>App i cykl życia</h2>
+  <p><code>App</code> to punkt startowy. Buduje się go łańcuchowo (builder), a na końcu
+  woła <code>run()</code>. Systemy działają w kolejności rejestracji.</p>
+<pre><code><span class="k">use</span> uran_engine::prelude::*;
+
+<span class="k">fn</span> <span class="f">main</span>() {
+    App::new()
+        .window(windowed(1280, 720).title(<span class="s">"Moja gra"</span>).vsync(<span class="k">true</span>))
+        .add_startup_system(|ctx: &amp;<span class="k">mut</span> Ctx| {
+            <span class="c">// raz, po utworzeniu renderera: ładuj assety, buduj świat</span>
+        })
+        .add_system(|ctx: &amp;<span class="k">mut</span> Ctx| {
+            <span class="c">// co klatkę: logika + rysowanie</span>
+        })
+        .run();
+}</code></pre>
+  <h3>Metody budowania</h3>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>.window(desc)</code></td><td>Ustawia opis okna (rozmiar, tytuł, vsync…).</td></tr>
+    <tr><td><code>.add_startup_system(f)</code></td><td>System uruchamiany raz na starcie.</td></tr>
+    <tr><td><code>.add_system(f)</code></td><td>System uruchamiany co klatkę.</td></tr>
+    <tr><td><code>.assets(path)</code></td><td>Katalog assetów (domyślnie <code>assets/</code>).</td></tr>
+    <tr><td><code>.camera(cam)</code></td><td>Domyślna kamera 2D.</td></tr>
+    <tr><td><code>.font(handle)</code></td><td>Czcionka dostępna w <code>Ctx::font</code>.</td></tr>
+    <tr><td><code>.run()</code></td><td>Startuje pętlę zdarzeń (blokuje wątek).</td></tr>
+  </table>
+  <h3>Opis okna</h3>
+  <p><code>windowed(szerokość, wysokość)</code> zwraca <code>WindowDescriptor</code>:</p>
+<pre><code>windowed(1280, 720)
+    .title(<span class="s">"Tytuł"</span>)
+    .resizable(<span class="k">true</span>)
+    .background(0x0A0C12)      <span class="c">// kolor tła (hex RRGGBB)</span>
+    .vsync(<span class="k">true</span>)
+    .samples(4)                <span class="c">// MSAA: 1, 2 lub 4</span>
+    .cursor_visible(<span class="k">true</span>)</code></pre>
+  <div class="note"><b>Systemy a stan</b>Stan gry trzymasz w zmiennej złapanej przez
+  closure (<code>move |ctx| …</code>). System to <code>FnMut(&amp;mut Ctx)</code>, więc może
+  mutować stan między klatkami.</div>
+</section>
+
+<section id="ctx">
+  <h2>Kontekst klatki (Ctx)</h2>
+  <p>Każdy system dostaje <code>&amp;mut Ctx</code> — jedno miejsce z dostępem do całego
+  silnika. Najważniejsze pola:</p>
+  <table>
+    <tr><th>Pole</th><th>Typ</th><th>Do czego</th></tr>
+    <tr><td><code>ctx.gfx</code></td><td><code>Graphics</code></td><td>Rysowanie natychmiastowe.</td></tr>
+    <tr><td><code>ctx.input</code></td><td><code>&amp;Input</code></td><td>Klawiatura i mysz.</td></tr>
+    <tr><td><code>ctx.time</code></td><td><code>&amp;Time</code></td><td>Delta czasu, FPS.</td></tr>
+    <tr><td><code>ctx.camera</code></td><td><code>Camera2d</code></td><td>Kamera 2D (edytowalna).</td></tr>
+    <tr><td><code>ctx.world</code></td><td><code>&amp;mut World</code></td><td>Świat ECS.</td></tr>
+    <tr><td><code>ctx.assets</code></td><td><code>&amp;mut AssetServer</code></td><td>Ładowanie assetów.</td></tr>
+    <tr><td><code>ctx.window</code></td><td><code>WindowState</code></td><td>Rozmiar okna (<code>size</code>).</td></tr>
+    <tr><td><code>ctx.clear_color</code></td><td><code>Color</code></td><td>Kolor tła na tę klatkę.</td></tr>
+    <tr><td><code>ctx.font</code></td><td><code>Option&lt;Font&gt;</code></td><td>Czcionka do HUD-u.</td></tr>
+  </table>
+  <h3>Przydatne metody</h3>
+<pre><code><span class="k">let</span> dt = ctx.dt();                       <span class="c">// delta czasu w sekundach</span>
+<span class="k">let</span> w  = ctx.mouse_world();              <span class="c">// pozycja myszy w świecie</span>
+<span class="k">let</span> img = ctx.load_image(<span class="s">"a.png"</span>);       <span class="c">// Option&lt;Handle&lt;Image&gt;&gt;</span>
+<span class="k">let</span> f   = ctx.load_font(<span class="s">"f.ttf"</span>);       <span class="c">// Option&lt;Handle&lt;FontData&gt;&gt;</span>
+<span class="k">let</span> map = ctx.load_tilemap(<span class="s">"maps/x.xml"</span>); <span class="c">// Option&lt;TileMap&gt;</span>
+ctx.set_post_fx(PostFxSettings { enabled: <span class="k">true</span>, ..Default::default() });</code></pre>
+</section>
+<section id="rysowanie">
+  <h2>Rysowanie (Graphics)</h2>
+  <p><code>ctx.gfx</code> to „pędzel" w trybie natychmiastowym — wywołania trafiają do
+  listy rysowania i renderują się w tej samej klatce. Współrzędne są w jednostkach
+  świata (oś Y w górę), chyba że przełączysz się w <code>screen_space()</code>.</p>
+<pre><code>ctx.gfx
+    .color(Color::RED)
+    .layer(10)
+    .draw_rect(Rect::from_xywh(0.0, 0.0, 100.0, 50.0));
+
+ctx.gfx.draw_line(Vec2::ZERO, Vec2::new(100.0, 0.0), 2.0);
+ctx.gfx.draw_circle(Vec2::new(50.0, 50.0), 20.0);</code></pre>
+  <h3>Najważniejsze metody</h3>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>.color(c)</code></td><td>Ustawia kolor/tint na kolejne rysowania.</td></tr>
+    <tr><td><code>.layer(n)</code></td><td>Warstwa sortowania — wyższa = na wierzchu.</td></tr>
+    <tr><td><code>.blend(b)</code></td><td>Tryb mieszania (Alpha, Additive…).</td></tr>
+    <tr><td><code>.draw_rect(r)</code></td><td>Wypełniony prostokąt.</td></tr>
+    <tr><td><code>.draw_rect_outline(r, w)</code></td><td>Obrys prostokąta.</td></tr>
+    <tr><td><code>.draw_line(a, b, w)</code></td><td>Linia o grubości <code>w</code>.</td></tr>
+    <tr><td><code>.draw_circle(c, r)</code></td><td>Koło wypełnione.</td></tr>
+    <tr><td><code>.draw_polygon(pts)</code></td><td>Wielokąt z listy punktów.</td></tr>
+    <tr><td><code>.draw_texture(tex, rect, uv)</code></td><td>Tekstura (region UV) w prostokącie.</td></tr>
+    <tr><td><code>.draw_text(font, txt, pos, size, align)</code></td><td>Tekst.</td></tr>
+    <tr><td><code>.screen_space()</code></td><td>Przejście do UI (0,0 = lewy górny, Y w dół).</td></tr>
+    <tr><td><code>.world_space()</code></td><td>Powrót do współrzędnych świata.</td></tr>
+    <tr><td><code>.translate/.scale/.rotate</code></td><td>Transformacje (stos).</td></tr>
+  </table>
+  <h3>Kolory</h3>
+<pre><code><span class="k">let</span> c = Color::from_hex(0xFF5500);      <span class="c">// hex RRGGBB</span>
+<span class="k">let</span> c = Color::rgba(1.0, 0.0, 0.0, 0.5); <span class="c">// z alfą</span>
+<span class="c">// gotowe stałe: WHITE, BLACK, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA…</span>
+c.with_alpha(0.5).multiply(0.8).lerp(Color::WHITE, 0.5)</code></pre>
+  <h3>Tekst</h3>
+<pre><code>ctx.gfx.screen_space();
+<span class="k">if let</span> Some(font) = ctx.font {
+    ctx.gfx.color(Color::WHITE).draw_text(
+        font, <span class="s">"Wynik: 100"</span>, Vec2::new(16.0, 16.0), 20.0, TextAlign::Left);
+}</code></pre>
+  <div class="tip"><b>Prostokąty i wektory</b><code>Rect::from_xywh(x, y, w, h)</code>,
+  <code>Rect::from_center(środek, rozmiar)</code>; wektor to glamowy <code>Vec2</code>
+  (<code>Vec2::new</code>, <code>Vec2::ZERO</code>, <code>Vec2::splat</code>, <code>.length()</code>,
+  <code>.normalize_or_zero()</code>).</div>
+</section>
+<section id="wejscie">
+  <h2>Wejście (Input)</h2>
+  <p><code>ctx.input</code> to migawka wejścia z bieżącej klatki. Rozróżnia stan
+  „przytrzymany" (<code>pressed</code>) od „wciśnięty w tej klatce" (<code>just_pressed</code>).</p>
+<pre><code><span class="k">if</span> ctx.input.just_pressed(Key::Space) { <span class="c">/* skok */</span> }
+<span class="k">if</span> ctx.input.pressed(Key::KeyW) { <span class="c">/* trzyma W */</span> }
+
+<span class="k">let</span> dir = ctx.input.axis(Key::KeyA, Key::KeyD);  <span class="c">// -1..1</span>
+<span class="k">let</span> mx = ctx.input.mouse_position();            <span class="c">// pozycja (ekran)</span>
+<span class="k">let</span> world = ctx.mouse_world();                 <span class="c">// pozycja (świat)</span>
+<span class="k">if</span> ctx.input.mouse_just_pressed(MouseButton::Left) { <span class="c">/* klik */</span> }</code></pre>
+  <h3>Najważniejsze metody</h3>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>.pressed(Key)</code> / <code>.just_pressed(Key)</code></td><td>Klawisz trzymany / wciśnięty teraz.</td></tr>
+    <tr><td><code>.just_released(Key)</code></td><td>Klawisz puszczony w tej klatce.</td></tr>
+    <tr><td><code>.mouse_pressed(M)</code> / <code>.mouse_just_pressed(M)</code></td><td>Przycisk myszy.</td></tr>
+    <tr><td><code>.mouse_position()</code></td><td>Pozycja kursora w pikselach ekranu.</td></tr>
+    <tr><td><code>.mouse_delta()</code></td><td>Ruch myszy między klatkami.</td></tr>
+    <tr><td><code>.scroll_delta()</code></td><td>Ruch kółka (zwraca <code>Vec2</code>).</td></tr>
+    <tr><td><code>.axis(neg, pos)</code></td><td>Oś -1..1 z dwóch klawiszy.</td></tr>
+    <tr><td><code>.control()</code> / <code>.shift()</code> / <code>.alt()</code></td><td>Modyfikatory.</td></tr>
+    <tr><td><code>.primary_pressed()</code></td><td>Lewy przycisk (alias).</td></tr>
+  </table>
+  <p><code>Key</code> to fizyczny kod klawisza (winit): <code>KeyW</code>, <code>KeyA</code>,
+  <code>Space</code>, <code>Escape</code>, <code>Enter</code>, <code>Tab</code>,
+  <code>ArrowLeft/Right/Up/Down</code>, <code>Digit1</code>…<code>Digit9</code>,
+  <code>BracketLeft/Right</code>. <code>Mouse</code> to <code>MouseButton</code>
+  (<code>Left</code>, <code>Right</code>, <code>Middle</code>).</p>
+</section>
+
+<section id="kamera">
+  <h2>Kamera 2D</h2>
+  <p><code>Camera2d</code> to projekcja ortograficzna z osią Y w górę. Domyślnie
+  <code>zoom = 1.0</code> oznacza, że 1 jednostka świata = 1 piksel.</p>
+<pre><code>ctx.camera.position = Vec2::new(100.0, 50.0);  <span class="c">// środek widoku</span>
+ctx.camera.zoom = 2.0;                        <span class="c">// powiększenie</span>
+
+<span class="k">let</span> view = ctx.camera.visible_rect(ctx.window.size); <span class="c">// co widać</span>
+<span class="k">let</span> p = ctx.camera.screen_to_world(mx, ctx.window.size);</code></pre>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>visible_rect(okno)</code></td><td>Widoczny prostokąt świata.</td></tr>
+    <tr><td><code>visible_size(okno)</code></td><td>Rozmiar widoku w jednostkach świata.</td></tr>
+    <tr><td><code>screen_to_world(p, okno)</code></td><td>Ekran → świat.</td></tr>
+    <tr><td><code>world_to_screen(p, okno)</code></td><td>Świat → ekran.</td></tr>
+    <tr><td><code>fit_world(rect, okno)</code></td><td>Ustawia zoom/pozycję na cały obszar.</td></tr>
+    <tr><td><code>clamp_to_bounds(rect, okno)</code></td><td>Nie pokazuje pustki poza światem.</td></tr>
+    <tr><td><code>smooth_follow(cel, dt, prędkość)</code></td><td>Płynne podążanie za celem.</td></tr>
+  </table>
+  <div class="tip"><b>Kamera za graczem</b>w systemie wywołaj
+  <code>ctx.camera.position = gracz.pos;</code> (albo <code>smooth_follow</code>) i wszystko,
+  co rysujesz w przestrzeni świata, samo się przewinie.</div>
+</section>
+<section id="asset">
+  <h2>Assety</h2>
+  <p>Obrazy i czcionki ładujesz przez <code>ctx</code>; zwracają lekkie uchwyty
+  (<code>Handle</code>), więc nie kopiujesz danych. Wynik jest cache'owany po ścieżce.</p>
+<pre><code><span class="k">if let</span> Some(tex) = ctx.load_image(<span class="s">"tiles/terrain.png"</span>) {
+    ctx.gfx.draw_texture(tex, Rect::from_xywh(0.0, 0.0, 64.0, 64.0), UvRect::FULL);
+}
+<span class="k">let</span> font = ctx.load_font(<span class="s">"fonts/DejaVuSans.ttf"</span>);</code></pre>
+  <ul>
+    <li><code>Handle&lt;Image&gt;</code> (alias <code>Texture</code>) — tekstura.</li>
+    <li><code>Handle&lt;FontData&gt;</code> (alias <code>Font</code>) — czcionka.</li>
+    <li><code>UvRect::FULL</code> — cała tekstura; region wycinasz przez <code>UvRect</code>.</li>
+  </ul>
+  <div class="note"><b>Katalog assetów</b>domyślnie <code>assets/</code>. Możesz go zmienić
+  przez <code>App::assets(path)</code>. Funkcja <code>find_asset_dir()</code> szuka katalogu
+  <code>assets</code> idąc w górę — dzięki temu <code>cargo run -p gra</code> działa z
+  dowolnego katalogu roboczego.</div>
+</section>
+
+<section id="ecs">
+  <h2>ECS (World)</h2>
+  <p><code>ctx.world</code> to świat ECS (hecs): encje + komponenty. Komponenty graficzne
+  (Sprite, Transform, Mesh, Material…) renderują się automatycznie.</p>
+<pre><code><span class="k">let</span> entity = ctx.world.spawn((
+    Transform { pos: Vec2::new(100.0, 100.0), ..Default::default() },
+    Sprite { texture: tex, ..Default::default() },
+));
+
+<span class="c">// zapytanie o komponenty</span>
+<span class="k">for</span> (_, (transform,)) <span class="k">in</span> ctx.world.query::&lt;(&amp;<span class="k">mut</span> Transform,)&gt;().iter() {
+    transform.pos += Vec2::new(1.0, 0.0);
+}</code></pre>
+  <div class="note"><b>ECS czy closure?</b>W tym silniku ECS jest opcjonalny. Do prostych
+  gier wystarczy stan w closure systemu (patrz <a href="#app">App</a>); ECS przydaje się,
+  gdy masz wiele podobnych obiektów (armie, cząsteczki). Wybierz prostsze narzędzie.</div>
+</section>
+<section id="tilemap">
+  <h2>Tilemapa</h2>
+  <p>Mapa kafli to arkusz (<code>Tileset</code>) + warstwy (<code>Layer</code>) + kolizje.
+  Najprościej wczytujesz mapę z XML, a potem rysujesz i sprawdzasz kolizje:</p>
+<pre><code><span class="k">let mut</span> map = ctx.load_tilemap(<span class="s">"maps/farm.xml"</span>).unwrap();
+
+<span class="c">// rysowanie (co klatkę)</span>
+map.draw(&amp;<span class="k">mut</span> ctx.gfx, ctx.camera.visible_rect(ctx.window.size));
+
+<span class="c">// kolizja gracza</span>
+<span class="k">if</span> map.overlaps_solid(gracz_rect) { <span class="c">/* cofnij ruch */</span> }
+
+<span class="c">// odczyt / zapis kafla</span>
+<span class="k">let</span> t = map.tile_at(0, x, y);
+map.set_tile(0, x, y, 12);</code></pre>
+  <h3>Budowa mapy w kodzie</h3>
+<pre><code><span class="k">let mut</span> map = TileMap::new(<span class="s">"farma"</span>, 32.0, 40, 30);
+map.add_tileset_from_image(<span class="s">"terrain"</span>, ctx.assets, <span class="s">"tiles/terrain.png"</span>, 32, 0, 0);
+
+<span class="k">let</span> podloga = map.add_layer(Layer::new(<span class="s">"ground"</span>, <span class="s">"terrain"</span>, 40, 30).as_editable());
+<span class="k">let</span> sciany   = map.add_layer(Layer::new(<span class="s">"walls"</span>,  <span class="s">"terrain"</span>, 40, 30).as_solid());
+
+<span class="c">// wypełnienie i kolizja</span>
+map.layers[podloga].tiles.fill_rect(0, 0, 40, 30, 1);
+map.set_tile(sciany, 5, 5, 9);
+map.set_props(sciany, 5, 5, TileProps::SOLID);
+
+map.save_xml(<span class="s">"assets/maps/farm.xml"</span>);</code></pre>
+  <h3>Kluczowe typy i metody</h3>
+  <table>
+    <tr><th>Typ / metoda</th><th>Opis</th></tr>
+    <tr><td><code>TileMap::new(nazwa, rozmiar_kafla, w, h)</code></td><td>Nowa pusta mapa.</td></tr>
+    <tr><td><code>add_tileset_from_image(…)</code></td><td>Rejestruje arkusz PNG.</td></tr>
+    <tr><td><code>add_layer(Layer)</code></td><td>Dodaje warstwę, zwraca jej indeks.</td></tr>
+    <tr><td><code>set_tile(l, x, y, i)</code> / <code>tile_at(l, x, y)</code></td><td>Zapis/odczyt kafla (respektuje <code>editable</code> i edit-area).</td></tr>
+    <tr><td><code>set_props(l, x, y, p)</code> / <code>props_at(l, x, y)</code></td><td>Właściwości (kolizja, woda…).</td></tr>
+    <tr><td><code>world_to_cell(v)</code> / <code>cell_rect(x, y)</code></td><td>Świat ↔ komórka siatki.</td></tr>
+    <tr><td><code>overlaps_solid(rect)</code></td><td>Kolizja z kaflami <code>solid</code>.</td></tr>
+    <tr><td><code>save_xml(path)</code> / <code>load_xml(assets, path)</code></td><td>Zapis / odczyt XML.</td></tr>
+    <tr><td><code>Layer::new(nazwa, tileset, w, h)</code></td><td>Nowa warstwa.</td></tr>
+    <tr><td><code>.as_solid()</code> / <code>.as_editable()</code></td><td>Flagi warstwy.</td></tr>
+  </table>
+  <p>Właściwości kafli (<code>TileProps</code>) to flagi bitowe: <code>SOLID</code>
+  (blokada), <code>WATER</code> (woda), <code>FARMLAND</code> (uprawa),
+  <code>REMOVABLE</code>, <code>PLACEABLE</code>, <code>WATERABLE</code>.</p>
+</section>
+
+<section id="xml">
+  <h2>Format XML mapy</h2>
+  <p>Mapy zapisują się w czytelnym XML — możesz je edytować też ręcznie.</p>
+<pre><code>&lt;map name=<span class="s">"farma"</span> tile-size=<span class="s">"32"</span> width=<span class="s">"40"</span> height=<span class="s">"30"</span>&gt;
+  &lt;spawn x=<span class="s">"8"</span> y=<span class="s">"6"</span>/&gt;
+  &lt;edit-area x=<span class="s">"4"</span> y=<span class="s">"4"</span> width=<span class="s">"12"</span> height=<span class="s">"10"</span>/&gt;
+  &lt;tileset name=<span class="s">"terrain"</span> src=<span class="s">"tilesets/terrain.png"</span> tile-size=<span class="s">"32"</span>/&gt;
+
+  &lt;layer name=<span class="s">"ground"</span> tileset=<span class="s">"terrain"</span> editable=<span class="s">"true"</span>&gt;
+    &lt;row y=<span class="s">"0"</span>&gt;1 1 1 1 . . 2 2&lt;/row&gt;
+  &lt;/layer&gt;
+
+  &lt;layer name=<span class="s">"walls"</span> tileset=<span class="s">"terrain"</span> solid=<span class="s">"true"</span>&gt;
+    &lt;props x=<span class="s">"3"</span> y=<span class="s">"3"</span>&gt;solid&lt;/props&gt;
+  &lt;/layer&gt;
+&lt;/map&gt;</code></pre>
+  <ul>
+    <li><code>.</code> w wierszu = pusty kafel; liczby to indeksy w arkuszu (od lewej góry).</li>
+    <li>Wiersz <code>y="0"</code> jest najbliżej dołu (oś Y w górę).</li>
+    <li>Atrybuty warstwy: <code>solid</code>, <code>editable</code>, <code>hidden</code>,
+        <code>width</code>/<code>height</code> (gdy różne od mapy).</li>
+    <li><code>&lt;props&gt;</code> przyjmuje listę nazw: <code>solid water farmland…</code>.</li>
+    <li><code>&lt;autotile base="…" mode="exact|presence"/&gt;</code> — automatyczne brzegi terenu.</li>
+  </ul>
+</section>
+<section id="edytor">
+  <h2>Edytor map</h2>
+  <p>Graficzny edytor (<code>uran-editor</code>) pozwala rysować mapy kafli na wielu
+  warstwach bez pisania XML. Uruchamiasz go z argumentami:</p>
+<pre><code><span class="c"># nowa mapa + arkusz kafli</span>
+cargo run -p uran-editor -- --new 32 24 32 --tileset terrain assets/tilesets/terrain.png 32
+
+<span class="c"># otwarcie istniejącej mapy</span>
+cargo run -p uran-editor -- --map assets/maps/farm.xml</code></pre>
+  <p>Flagi:</p>
+  <ul>
+    <li><code>--new &lt;w&gt; &lt;h&gt; [rozmiar_kafla]</code> — nowa mapa.</li>
+    <li><code>--map &lt;ścieżka.xml&gt;</code> — wczytaj mapę.</li>
+    <li><code>--tileset &lt;nazwa&gt; &lt;plik.png&gt; &lt;rozmiar_kafla_px&gt;</code> — dodaj arkusz.</li>
+  </ul>
+  <table>
+    <tr><th>Skrót</th><th>Działanie</th></tr>
+    <tr><td><kbd>LPM</kbd></td><td>Rysuj wybrany kafel.</td></tr>
+    <tr><td><kbd>PPM</kbd></td><td>Usuń kafel.</td></tr>
+    <tr><td><kbd>ŚPM</kbd> lub <kbd>Spacja</kbd>+<kbd>LPM</kbd></td><td>Przesuń widok.</td></tr>
+    <tr><td><kbd>kółko</kbd></td><td>Zoom.</td></tr>
+    <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Przełącz warstwę.</td></tr>
+    <tr><td><kbd>Tab</kbd></td><td>Przełącz arkusz.</td></tr>
+    <tr><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>Poprzedni / następny kafel.</td></tr>
+    <tr><td><kbd>N</kbd></td><td>Nowa warstwa.</td></tr>
+    <tr><td><kbd>H</kbd></td><td>Ukryj/pokaż aktywną warstwę.</td></tr>
+    <tr><td><kbd>F</kbd></td><td>Przełącz kolizję <code>solid</code> na kaflu pod kursorem.</td></tr>
+    <tr><td><kbd>G</kbd></td><td>Przełącz siatkę.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Zapisz / wczytaj mapę.</td></tr>
+  </table>
+</section>
+
+<section id="elementy">
+  <h2>Elementy gry (object / init / data)</h2>
+  <p>Element to samodzielny fragment gry. Tworzysz go jednym poleceniem:</p>
+<pre><code>./target/debug/uran element przeciwnik   <span class="c"># w katalogu projektu</span></code></pre>
+  <p>Powstaje katalog:</p>
+<pre><code>src/elements/przeciwnik/
+├── mod.rs      <span class="c"># pub mod data; pub mod init; pub mod object;</span>
+├── object.rs   <span class="c"># update(ctx) — co klatkę</span>
+├── init.rs     <span class="c"># init(ctx)   — raz na starcie</span>
+└── data/
+    ├── mod.rs
+    ├── a1.rs … z9.rs   <span class="c"># 234 puste szablony do wypełnienia</span></code></pre>
+  <p>Każdy skrypt <code>data/&lt;id&gt;.rs</code> to pusty szablon z dwiema funkcjami:</p>
+<pre><code><span class="k">use</span> uran_engine::prelude::*;
+
+<span class="k">pub fn</span> <span class="f">init</span>(_ctx: &amp;<span class="k">mut</span> Ctx)   { <span class="c">// raz na starcie</span> }
+<span class="k">pub fn</span> <span class="f">update</span>(_ctx: &amp;<span class="k">mut</span> Ctx) { <span class="c">// co klatkę</span> }</code></pre>
+  <div class="tip"><b>Jak to spinać</b>Wypełniasz szablon (animacje, logika), a on już jest
+  podpięty: <code>object.rs</code> elementu wywołuje <code>data::a1::update</code>…
+  <code>data::z9::update</code>, a centralne <code>src/object.rs</code>/<code>src/init.rs</code>
+  wywołują <code>object::update</code>/<code>init::init</code> całego elementu. Dodajesz
+  własny skrypt w <code>data/</code> i dopisujesz wywołanie — reszta dzieje się sama.</div>
+  <p>Centralne pliki zawierają markery, wokół których CLI dopisuje wywołania:</p>
+<pre><code><span class="c">// src/object.rs</span>
+<span class="k">pub fn</span> <span class="f">update_all</span>(ctx: &amp;<span class="k">mut</span> Ctx) {
+    elements::przeciwnik::object::update(ctx);
+    <span class="c">// [uran:calls]</span>
+}</code></pre>
+</section>
+
+<section id="skroty">
+  <h2>Ściąga skrótów</h2>
+  <h3>CLI <code>uran</code></h3>
+<pre><code>uran new &lt;nazwa&gt; [--engine &lt;ścieżka&gt;] [--at &lt;katalog&gt;] [--bin]
+uran element &lt;nazwa&gt; [--at &lt;katalog&gt;]
+uran help | --version</code></pre>
+  <h3>Najczęstsze wywołania w kodzie</h3>
+<pre><code><span class="c">// start</span>
+App::new().window(windowed(1280,720).title(<span class="s">"Gra"</span>)).add_system(update).run();
+
+<span class="c">// rysowanie</span>
+ctx.gfx.color(Color::RED).draw_rect(rect);          ctx.gfx.draw_line(a, b, 2.0);
+ctx.gfx.screen_space();                             ctx.gfx.world_space();
+
+<span class="c">// wejście</span>
+ctx.input.just_pressed(Key::Space);                 ctx.input.pressed(Key::KeyW);
+ctx.mouse_world();                                  ctx.input.mouse_pressed(MouseButton::Left);
+
+<span class="c">// kamera</span>
+ctx.camera.position = gracz.pos;                    ctx.camera.visible_rect(ctx.window.size);
+
+<span class="c">// mapa</span>
+map.draw(&amp;mut ctx.gfx, view);                        map.overlaps_solid(rect);
+map.set_tile(l, x, y, i);                           map.save_xml(path);
+
+<span class="c">// asset</span>
+ctx.load_image(path);                               ctx.load_font(path);</code></pre>
+  <div class="note"><b>Wszystko w jednym imporcie</b><code>use uran_engine::prelude::*;</code>
+  daje: <code>App</code>, <code>Ctx</code>, <code>Graphics</code>, <code>Camera2d</code>,
+  <code>Input</code>/<code>Key</code>/<code>Mouse</code>, <code>Color</code>/<code>Rect</code>/<code>Vec2</code>,
+  <code>TileMap</code>/<code>Tileset</code>/<code>Layer</code>/<code>TileProps</code>,
+  <code>World</code> (ECS) i <code>TextAlign</code>.</div>
+</section>
+
+
+
+
+
+
+
+</main>
+</div>
+</body>
+</html>
