@@ -8,6 +8,8 @@ members = [
     "uran-tanks", "stardew-demo",    # FPS z czołgami (renderer 3D)
     "endfield-3d",   # akcja 3D w stylu Endfield (PBR + NPR)
     "crates/uran-anim", # animacja 2D: arkusze klatek, kierunki, maszyna stanów
+    "uran-editor",   # edytor graficzny map kafli
+    "uran-cli",      # zarządzanie projektami (`uran new` / `uran element`)
 ]
 
 [workspace.dependencies]

@@ -1,0 +1,12 @@
+[package]
+name = "uran-editor"
+version = "0.1.0"
+edition = "2021"
+description = "Edytor graficzny map kafli dla silnika Uran"
+
+[[bin]]
+name = "uran-editor"
+path = "src/main.rs"
+
+[dependencies]
+uran-engine.workspace = true

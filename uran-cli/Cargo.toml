@@ -1,0 +1,9 @@
+[package]
+name = "uran-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Zarządzanie projektami i elementami gier na silniku Uran"
+
+[[bin]]
+name = "uran"
+path = "src/main.rs"

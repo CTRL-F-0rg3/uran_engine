@@ -1,0 +1,7 @@
+[package]
+name = "uran-math"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+glam.workspace = true

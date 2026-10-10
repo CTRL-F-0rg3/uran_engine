@@ -1973,6 +1973,10 @@ name = "uran-audio"
 version = "0.1.0"
 
 [[package]]
+name = "uran-cli"
+version = "0.1.0"
+
+[[package]]
 name = "uran-core"
 version = "0.1.0"
 dependencies = [
@@ -1988,6 +1992,13 @@ dependencies = [
  "hecs",
  "uran-asset",
  "uran-math",
+]
+
+[[package]]
+name = "uran-editor"
+version = "0.1.0"
+dependencies = [
+ "uran-engine",
 ]
 
 [[package]]
@@ -2039,6 +2050,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "bytemuck",
+ "naga",
  "uran-asset",
  "uran-ecs",
  "uran-math",

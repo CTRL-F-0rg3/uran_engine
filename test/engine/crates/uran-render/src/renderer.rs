@@ -21,7 +21,6 @@ use crate::batch::{
 use crate::camera::Camera2d;
 use crate::compute::GpuSim;
 use crate::text::FontRegistry;
-use uran_ecs::BlendMode;
 
 /// Statystyki pojedynczej klatki (do HUD-a i debugu).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -749,8 +748,9 @@ impl Renderer {
                     stats.instances += n;
                 }
             }
-            // faza rysowania — metoda tylko odczytuje stan renderera
-            stats.draw_calls += self.draw_ordered(&mut pass, list, &mut stats);
+            // faza rysowania — obie metody tylko odczytują stan renderera
+            stats.draw_calls += self.draw_sprites(&mut pass, list.sprites(), &mut stats);
+            stats.draw_calls += self.draw_meshes(&mut pass, list);
         }
 
         // --- post-processing 2D: scena z tekstury pośredniej na ekran -----
@@ -837,156 +837,96 @@ impl Renderer {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    /// Rysuje całą listę, respektując `layer` **także między sprite'ami
-    /// a siatkami**.
+    /// Rysuje sprite'y: instancje leżą już w kolejności rysowania, więc
+    /// wystarczy rozciąć listę na przebiegi o jednakowej (tekstura, tryb).
     ///
-    /// Wcześniej renderer rysował najpierw wszystkie sprite'y, a potem
-    /// wszystkie siatki, niezależnie od warstwy. W grze 2D top-down to błąd:
-    /// ozdobna podłoga (siatka albo pierścień) zasłaniała postać stojącą na
-    /// niej, a `Graphics::layer()` nie działał dla takiej pary. Teraz obie
-    /// listy trafiają do jednego posortowanego ciągu, więc warstwa ma
-    /// znaczenie tak, jak się spodziewamy.
-    ///
-    /// Przy równej warstwie kolejność jest taka jak dotąd: sprite'y przed
-    /// siatkami (sortowanie jest stabilne), więc zachowanie gier, które nie
-    /// używają warstw, się nie zmienia.
-    fn draw_ordered<'a>(
+    /// Wymaga wcześniejszego `ensure_bound` dla użytych tekstur (faza
+    /// przygotowania) — wtedy tu wystarczy niemutowalny dostęp.
+    fn draw_sprites<'a>(
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
-        list: &DrawList,
+        sprites: &[SpriteDraw],
         stats: &mut FrameStats,
     ) -> usize {
-        let sprites = list.sprites();
-        let meshes = list.meshes();
-        stats.instances = sprites.len();
-        if sprites.is_empty() && meshes.is_empty() {
+        if sprites.is_empty() {
             return 0;
         }
+        stats.instances = sprites.len();
+        pass.set_vertex_buffer(0, self.quad_vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        pass.set_index_buffer(self.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-        // Jednostki rysowania: przebieg sprite'ów o jednakowej teksturze
-        // (dla batchingu) albo pojedyncza siatka.
-        enum Unit {
-            Sprites { start: usize, end: usize },
-            Mesh(usize),
-        }
-
-        let mut units: Vec<((bool, i32, BlendMode), Unit)> = Vec::new();
-
-        // `DrawList::sort` ustawiło sprite'y wg (screen_space, layer,
-        // blend, texture), więc przebiegi o tej samej teksturze są spójne.
-        let mut i = 0usize;
-        while i < sprites.len() {
-            let first = &sprites[i];
-            let mut j = i + 1;
-            while j < sprites.len() {
-                let next = &sprites[j];
+        let mut draw_calls = 0;
+        let mut run_start = 0usize;
+        while run_start < sprites.len() {
+            let first = &sprites[run_start];
+            let mut run_end = run_start + 1;
+            while run_end < sprites.len() {
+                let next = &sprites[run_end];
+                // `screen_space` musi rozdzielać przebiegi: HUD i scena mają
+                // różne macierze, więc bez tego warunek cały HUD dostałby
+                // macierz świata (albo odwrotnie) i pojechałby w złym miejscu.
                 if next.texture != first.texture
                     || next.blend != first.blend
                     || next.screen_space != first.screen_space
-                    || next.layer != first.layer
                 {
                     break;
                 }
-                j += 1;
+                run_end += 1;
             }
-            units.push((
-                (first.screen_space, first.layer, first.blend),
-                Unit::Sprites { start: i, end: j },
-            ));
-            i = j;
-        }
 
-        for (index, mesh) in meshes.iter().enumerate() {
-            units.push((
-                (mesh.screen_space, mesh.layer, mesh.blend),
-                Unit::Mesh(index),
-            ));
-        }
-
-        // Stabilnie: przy równych kluczach zachowujemy kolejność dodania.
-        units.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let mut draw_calls = 0usize;
-        for (_, unit) in units {
-            match unit {
-                Unit::Sprites { start, end } => {
-                    draw_calls += self.draw_sprite_run(pass, sprites, start, end);
-                }
-                Unit::Mesh(index) => {
-                    draw_calls += self.draw_mesh(pass, list, index);
-                }
+            pass.set_pipeline(self.pipelines.sprite(first.blend));
+            if first.screen_space {
+                pass.set_bind_group(1, &self.screen_globals_bind_group, &[]);
+            } else {
+                pass.set_bind_group(1, &self.globals_bind_group, &[]);
             }
+            pass.set_bind_group(0, self.textures.get_bound(first.texture), &[]);
+            pass.draw_indexed(
+                0..self.quad_index_count,
+                0,
+                run_start as u32..run_end as u32,
+            );
+            draw_calls += 1;
+            run_start = run_end;
         }
         draw_calls
     }
 
-    /// Rysuje jeden przebieg sprite'ów (jedna tekstura, jeden tryb, jedna
-    /// warstwa) jako pojedynczy draw call.
-    ///
-    /// Wymaga wcześniejszego `ensure_bound` dla użytych tekstur (faza
-    /// przygotowania) — wtedy tu wystarczy niemutowalny dostęp.
-    fn draw_sprite_run<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        sprites: &[SpriteDraw],
-        start: usize,
-        end: usize,
-    ) -> usize {
-        if end <= start {
-            return 0;
-        }
-        let first = &sprites[start];
-        pass.set_vertex_buffer(0, self.quad_vertex_buffer.slice(..));
-        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-        pass.set_index_buffer(self.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_pipeline(self.pipelines.sprite(first.blend));
-        if first.screen_space {
-            pass.set_bind_group(1, &self.screen_globals_bind_group, &[]);
-        } else {
-            pass.set_bind_group(1, &self.globals_bind_group, &[]);
-        }
-        pass.set_bind_group(0, self.textures.get_bound(first.texture), &[]);
-        pass.draw_indexed(0..self.quad_index_count, 0, start as u32..end as u32);
-        1
-    }
-
-    /// Rysuje jedną siatkę — ma własną geometrię, więc to jeden draw call.
+    /// Rysuje siatki — każda to osobny draw call (mają własną geometrię).
     ///
     /// Wymaga wcześniejszego `ensure_mesh` (faza przygotowania).
-    fn draw_mesh<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        list: &DrawList,
-        index: usize,
-    ) -> usize {
+    fn draw_meshes<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, list: &DrawList) -> usize {
         let geometry = list.geometry();
-        let Some(mesh) = list.meshes().get(index) else {
-            return 0;
-        };
-        let Some(geo) = geometry.get(mesh.geometry as usize) else {
-            return 0;
-        };
-        if geo.indices.is_empty() {
-            return 0;
-        }
-        let Some(gpu_mesh) = self.meshes.get(&geo.hash) else {
-            return 0;
-        };
+        let mut draw_calls = 0;
 
-        let push = MeshPushConstants::new(mesh.transform, mesh.color);
-        pass.set_pipeline(self.pipelines.mesh(mesh.blend));
-        // HUD rysowany z siatek (np. ikony UI) musi dostać macierz ekranu
-        if mesh.screen_space {
-            pass.set_bind_group(1, &self.screen_globals_bind_group, &[]);
-        } else {
-            pass.set_bind_group(1, &self.globals_bind_group, &[]);
+        for mesh in list.meshes() {
+            let Some(geo) = geometry.get(mesh.geometry as usize) else {
+                continue;
+            };
+            if geo.indices.is_empty() {
+                continue;
+            }
+            let Some(gpu_mesh) = self.meshes.get(&geo.hash) else {
+                continue;
+            };
+
+            let push = MeshPushConstants::new(mesh.transform, mesh.color);
+            pass.set_pipeline(self.pipelines.mesh(mesh.blend));
+            // HUD rysowany z siatek (np. ikony UI) musi dostać macierz ekranu
+            if mesh.screen_space {
+                pass.set_bind_group(1, &self.screen_globals_bind_group, &[]);
+            } else {
+                pass.set_bind_group(1, &self.globals_bind_group, &[]);
+            }
+            pass.set_bind_group(0, self.textures.get_bound(mesh.texture), &[]);
+            pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
+            pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+            draw_calls += 1;
         }
-        pass.set_bind_group(0, self.textures.get_bound(mesh.texture), &[]);
-        pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
-        pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-        pass.set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-        1
+        draw_calls
     }
 
     /// Tworzy bufory GPU dla geometrii, jeśli jeszcze ich nie ma (faza
