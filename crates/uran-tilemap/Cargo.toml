@@ -10,3 +10,5 @@ uran-asset.workspace = true
 uran-render.workspace = true
 uran-ecs.workspace = true
 quick-xml = "0.41"
+base64 = "0.22"
+flate2 = "1"

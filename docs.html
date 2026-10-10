@@ -74,12 +74,20 @@
     <a href="#kamera">Kamera 2D</a>
     <a href="#asset">Assety</a>
     <a href="#ecs">ECS (World)</a>
+    <a href="#ui">UI — Canvas</a>
+    <a href="#anim">Animacja 2D</a>
     <div class="group">Świat i mapy</div>
     <a href="#tilemap">Tilemapa</a>
     <a href="#xml">Format XML mapy</a>
     <a href="#edytor">Edytor map</a>
-    <div class="group">Elementy gry</div>
+    <a href="#tiled">Tiled (TMX)</a>
+    <a href="#render3d">Render 3D</a>
+    <div class="group">Gra i sceny</div>
+    <a href="#fizyka">Fizyka (rapier)</a>
+    <a href="#audio">Audio</a>
+    <a href="#sceny">Sceny i przełączanie</a>
     <a href="#elementy">Elementy (object/init/data)</a>
+    <a href="#ffi">FFI (C#/C++)</a>
     <a href="#skroty">Ściąga skrótów</a>
   </nav>
 </aside>
@@ -260,6 +268,89 @@ c.with_alpha(0.5).multiply(0.8).lerp(Color::WHITE, 0.5)</code></pre>
   (<code>Vec2::new</code>, <code>Vec2::ZERO</code>, <code>Vec2::splat</code>, <code>.length()</code>,
   <code>.normalize_or_zero()</code>).</div>
 </section>
+<section id="ui">
+  <h2>UI — Canvas</h2>
+  <p>Silnik ma system UI w stylu <b>Canvas</b> z Unity (<code>uran-ui</code>): drzewo
+  elementów z <code>RectTransform</code> (anchor + pivot), obrazami, tekstem i
+  przyciskami. Canvas może działać w przestrzeni ekranu (HUD) albo świata.</p>
+<pre><code><span class="k">let</span> hud = Canvas::screen(
+    Element::panel(<span class="s">"tlo"</span>, RectTransform::center(Vec2::new(400.0, 300.0)),
+                   Color::from_hex(0x1B1F2A).with_alpha(0.9))
+        .with_child(Element::button(
+            <span class="s">"graj"</span>, RectTransform::center(Vec2::new(160.0, 48.0)),
+            <span class="s">"Graj"</span>, 20.0, Color::from_hex(0x2A3446), Color::from_hex(0x3A4A66))),
+);
+
+<span class="c">// rysowanie — tryb ekranu sam przełącza w screen_space()</span>
+ctx.ui(&amp;hud);
+
+<span class="c">// hit-test: nazwa najwyższego elementu pod myszą</span>
+<span class="k">let</span> root = Rect::from_xywh(0.0, 0.0, ctx.window.size.x, ctx.window.size.y);
+<span class="k">if let</span> Some(nazwa) = hud.hit(root, ctx.input.mouse_position()) {
+    <span class="c">// np. nazwa == "graj"</span>
+}</code></pre>
+  <h3>RectTransform — anchor + pivot</h3>
+  <table>
+    <tr><th>Pole</th><th>Opis</th></tr>
+    <tr><td><code>anchor</code> (0..1)</td><td>Punkt w rodzicu: (0,0)=róg min, (1,1)=róg max.</td></tr>
+    <tr><td><code>pivot</code> (0..1)</td><td>Punkt w elemencie, który ląduje na anchorze.</td></tr>
+    <tr><td><code>size</code></td><td>Rozmiar elementu (piksele / jednostki świata).</td></tr>
+    <tr><td><code>offset</code></td><td>Dodatkowe przesunięcie od punktu anchora.</td></tr>
+  </table>
+  <p>Gotowe kotwice: <code>center</code>, <code>top_left</code>, <code>top_right</code>,
+  <code>bottom_left</code>, <code>bottom_right</code>, <code>top_center</code>,
+  <code>bottom_center</code> — każda z <code>.offset(v)</code>.</p>
+  <h3>Elementy</h3>
+  <table>
+    <tr><th>Konstruktor</th><th>Rysuje</th></tr>
+    <tr><td><code>Element::panel(n, t, kolor)</code></td><td>Kolorowe tło.</td></tr>
+    <tr><td><code>Element::image(n, t, tex)</code></td><td>Obraz (tekstura).</td></tr>
+    <tr><td><code>Element::image_uv(n, t, tex, uv, kolor)</code></td><td>Obraz z regionem UV + tintem.</td></tr>
+    <tr><td><code>Element::text(n, t, txt, size, kolor)</code></td><td>Tekst.</td></tr>
+    <tr><td><code>Element::button(n, t, label, size, kolor, hover)</code></td><td>Przycisk (tło + etykieta).</td></tr>
+  </table>
+  <p>Drzewo budujesz przez <code>.with_child(el)</code> / <code>.with_children(...)</code>;
+  dzieci pozycjonują się względem rodzica. <code>Canvas::world(root)</code> rysuje w
+  przestrzeni świata (podąża za kamerą), <code>Canvas::draw(gfx, font, root)</code> daje
+  pełną kontrolę, a <code>layout(root)</code> zwraca rozwiązane prostokąty.</p>
+  <div class="tip"><b>Niski poziom</b>pod spodem Canvas woła to samo co ręcznie:
+  <code>ctx.gfx.screen_space()</code> + <code>draw_rect/draw_texture/draw_text</code> —
+  Canvas tylko rozwiązuje layout (anchor/pivot) i pilnuje warstwy (domyślnie 2000).</div>
+</section>
+
+
+<section id="anim">
+  <h2>Animacja 2D</h2>
+  <p><code>uran-anim</code> to arkusz klatek (<code>SpriteSheet</code>), odtwarzanie
+  (<code>Animator</code>) i gotowa postać (<code>Character</code>), która sama dobiera
+  animację do ruchu.</p>
+<pre><code><span class="k">let</span> idle = ctx.load_image(<span class="s">"player/Idle.png"</span>).unwrap();
+<span class="k">let</span> walk = ctx.load_image(<span class="s">"player/Walk.png"</span>).unwrap();
+<span class="k">let</span> sheets = CharacterSheets {
+    idle: SpriteSheet::new(idle, Vec2::new(64.0, 128.0), size_of(idle)),
+    walk: SpriteSheet::new(walk, Vec2::new(64.0, 128.0), size_of(walk)),
+    run:  SpriteSheet::new(walk, Vec2::new(64.0, 128.0), size_of(walk)),
+};
+
+<span class="c">// aktualizacja: postać sama wybiera Idle/Walk/Run i kierunek</span>
+<span class="k">let</span> input = Vec2::new(
+    ctx.input.axis(Key::KeyA, Key::KeyD),
+    ctx.input.axis(Key::KeyS, Key::KeyW),
+);
+gracz.update(ctx.dt(), input, ctx.input.shift(), bounds, config);
+
+<span class="c">// rysowanie</span>
+gracz.draw(&amp;<span class="k">mut</span> ctx.gfx, &amp;sheets, config);</code></pre>
+  <table>
+    <tr><th>Typ</th><th>Rola</th></tr>
+    <tr><td><code>SpriteSheet</code></td><td>Siatka klatek w teksturze.</td></tr>
+    <tr><td><code>AnimationClip</code> / <code>Animator</code></td><td>Która klatka jest aktualna.</td></tr>
+    <tr><td><code>Facing</code></td><td>4 kierunki = 4 wiersze arkusza.</td></tr>
+    <tr><td><code>Character</code></td><td>Pozycja + ruch + automatyczna animacja.</td></tr>
+    <tr><td><code>SpriteEffect</code></td><td>Animacja jednorazowa (wybuch, zaklęcie).</td></tr>
+  </table>
+</section>
+
 <section id="wejscie">
   <h2>Wejście (Input)</h2>
   <p><code>ctx.input</code> to migawka wejścia z bieżącej klatki. Rozróżnia stan
@@ -454,6 +545,186 @@ cargo run -p uran-editor -- --map assets/maps/farm.xml</code></pre>
   </table>
 </section>
 
+<section id="tiled">
+  <h2>Tiled (TMX)</h2>
+  <p>Silnik wczytuje mapy z programu <b>Tiled</b> (format <code>.tmx</code> + <code>.tsx</code>)
+  i konwertuje je na natywną <code>TileMap</code>.</p>
+<pre><code><span class="k">let</span> tiled = ctx.load_tiled_map(<span class="s">"maps/poziom.tmx"</span>).unwrap();
+tiled.map.draw(&amp;<span class="k">mut</span> ctx.gfx, ctx.camera.visible_rect(ctx.window.size));
+
+<span class="c">// obiekty z warstw obiektów (spawny, strefy, kolizje)</span>
+<span class="k">for</span> obj <span class="k">in</span> &amp;tiled.objects {
+    <span class="k">if</span> obj.name == <span class="s">"spawn"</span> { gracz.pos = obj.rect.min; }
+}</code></pre>
+  <table>
+    <tr><th>Cecha Tiled</th><th>Wsparcie</th></tr>
+    <tr><td>Warstwy kafli</td><td>Tak — na warstwy silnika (wiele arkuszy w warstwie = podwarstwy <code>nazwa [arkusz]</code>).</td></tr>
+    <tr><td>Arkusze inline i <code>.tsx</code></td><td>Tak.</td></tr>
+    <tr><td><code>&lt;data&gt;</code> csv / base64 (+zlib/gzip)</td><td>Tak.</td></tr>
+    <tr><td>Warstwy obiektów</td><td>Tak — jako <code>objects</code> (prostokąty w świecie).</td></tr>
+    <tr><td>Flip poziomy/pionowy</td><td>Tak (diagonalny przybliżony).</td></tr>
+    <tr><td>Kolizje</td><td>Warstwy o nazwie <code>wall/solid/collision</code> stają się <code>solid</code>.</td></tr>
+  </table>
+  <div class="note"><b>Ograniczenia</b>orientacja <code>orthogonal</code>, mapy skończone
+  (<code>infinite="0"</code>) i kafle kwadratowe. Tiled liczy oś Y od góry, silnik od dołu —
+  konwersja odwraca ją automatycznie (także dla obiektów).</div>
+</section>
+
+<section id="render3d">
+  <h2>Render 3D</h2>
+  <p><code>uran-render3d</code> to osobny podsystem 3D (własne shadery, depth buffer,
+  potoki) współdzielący z rendererem 2D tylko urządzenie GPU. Oświetlenie to
+  hybryda PBR + NPR (styl „anime semi-realistyczne"): fizyczne odbicia + rysunkowa
+  rampa cieni, niebo Rayleigh/Mie, mgła, cienie i rozbudowany postfx (SSR, bloom,
+  DoF, tonemapping ACES).</p>
+  <p>Kluczowe typy (re-eksportowane przez <code>prelude</code>):</p>
+  <table>
+    <tr><th>Typ</th><th>Rola</th></tr>
+    <tr><td><code>Renderer3d</code></td><td>Cały renderer — implementuje <code>Scene3d</code> i rysuje scenę.</td></tr>
+    <tr><td><code>Camera3d</code> / <code>Ray</code></td><td>Kamera perspektywiczna + promień (picking).</td></tr>
+    <tr><td><code>MeshId</code> / <code>DrawCmd</code></td><td>Zarejestrowana siatka + polecenie „narysuj tę siatkę w tej macierzy".</td></tr>
+    <tr><td><code>Lighting</code></td><td>Słońce: kierunek, kolor, natężenie, ambient.</td></tr>
+    <tr><td><code>Stylization</code> / <code>Atmosphere</code></td><td>Siła „rysunkowości" + mgła/niebo.</td></tr>
+    <tr><td><code>MaterialBank</code> / <code>MaterialId</code> / <code>Surface</code></td><td>Materiały PBR (tekstury, chropowatość, metaliczność).</td></tr>
+    <tr><td><code>ImportedModel</code></td><td>Model z pliku (glTF / OBJ+MTL).</td></tr>
+    <tr><td><code>ShadowMap</code> / <code>ShadowSettings</code></td><td>Cienie kierunkowe.</td></tr>
+    <tr><td><code>PostSettings</code></td><td>Post-processing (SSR, bloom, DoF…).</td></tr>
+  </table>
+  <div class="note"><b>Jak podpiąć</b>renderer 3D budujesz na gotowym urządzeniu
+  (<code>Renderer3d::new(gpu, format, samples)</code>) i podpinasz do renderera 2D jako
+  <code>Scene3d</code> — wzorzec znajdziesz w demach <code>endfield-3d</code> i
+  <code>uran-tanks</code>. Scena 3D rysuje się w swoim render passie, PRZED passem 2D,
+  więc HUD (2D) zawsze leży na wierzchu.</div>
+</section>
+
+<section id="fizyka">
+  <h2>Fizyka (rapier)</h2>
+  <p><code>uran-physics</code> ma dwa poziomy: prosty AABB (<code>CollisionWorld</code>)
+  i pełną fizykę <b>rapier2d</b> — dynamiczne ciała, grawitacja, impulsy. Wrapper
+  <code>PhysicsWorld</code> daje jednolite API.</p>
+<pre><code><span class="k">let mut</span> phys = PhysicsWorld::new(Vec2::new(0.0, -980.0)); <span class="c">// grawitacja</span>
+<span class="k">let</span> podloga = phys.add_static_box(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 20.0));
+<span class="k">let</span> gracz   = phys.add_dynamic_box(Vec2::new(0.0, 120.0), Vec2::new(24.0, 24.0));
+
+<span class="c">// co klatkę:</span>
+<span class="k">if</span> ctx.input.just_pressed(Key::Space) {
+    phys.apply_impulse(&amp;gracz, Vec2::new(0.0, 9000.0), <span class="k">true</span>); <span class="c">// skok</span>
+}
+phys.step(ctx.dt());
+<span class="k">let</span> pos = phys.position(&amp;gracz);  <span class="c">// pozycja środka</span></code></pre>
+  <h3>Metody <code>PhysicsWorld</code></h3>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>new(gravity)</code></td><td>Nowy świat z grawitacją.</td></tr>
+    <tr><td><code>add(center, size, kind)</code></td><td>Dodaje ciało (<code>BodyKind::Dynamic</code>/<code>Fixed</code>).</td></tr>
+    <tr><td><code>add_dynamic_box / add_static_box</code></td><td>Skróty dla kwadratów.</td></tr>
+    <tr><td><code>step(dt)</code></td><td>Krok symulacji (zwykle <code>ctx.dt()</code>).</td></tr>
+    <tr><td><code>position / velocity</code></td><td>Odczyt stanu ciała.</td></tr>
+    <tr><td><code>set_position / set_velocity</code></td><td>Teleport / ustawienie prędkości.</td></tr>
+    <tr><td><code>apply_impulse / apply_force</code></td><td>Impuls (skok) / stała siła (wiatr).</td></tr>
+    <tr><td><code>remove / body_count</code></td><td>Usuwanie ciał / licznik.</td></tr>
+  </table>
+  <div class="tip"><b>Grawitacja</b>typowa wartość to <code>Vec2::new(0.0, -980.0)</code>
+  (px/s²). Skok to impuls do góry; podłogi dodawaj jako <code>Fixed</code>.</div>
+</section>
+
+<section id="audio">
+  <h2>Audio</h2>
+  <p><code>uran-audio</code> (opakowanie <b>rodio</b>) odtwarza dźwięki i muzykę. Tworzysz
+  <code>Audio</code>, wczytujesz <code>Clip</code> (bufor próbek) i odtwarzasz go raz
+  albo w pętli, dostając <code>Sound</code> — kontrolkę głośności i pauzy.</p>
+<pre><code><span class="k">let</span> audio = Audio::new().ok();                          <span class="c">// Option&lt;Audio&gt;</span>
+<span class="k">let</span> skok = Clip::from_file(<span class="s">"assets/sfx/skok.ogg"</span>).ok();
+<span class="k">let</span> muzyka = Clip::from_file(<span class="s">"assets/muzyka.ogg"</span>).ok();
+
+<span class="c">// w systemie:</span>
+<span class="k">if let</span> (Some(a), Some(s)) = (&amp;audio, &amp;skok) {
+    <span class="k">if</span> ctx.input.just_pressed(Key::Space) {
+        <span class="k">if let</span> Ok(sound) = a.play_clip(s) { sound.set_volume(0.8); }
+    }
+}
+<span class="c">// muzyka w tle (pętla) — trzymaj Sound, by nie przerwać</span>
+<span class="k">if let</span> (Some(a), Some(m)) = (&amp;audio, &amp;muzyka) {
+    <span class="k">if let</span> Ok(bg) = a.loop_clip(m) { bg.set_volume(0.3); }
+}</code></pre>
+  <h3>API</h3>
+  <table>
+    <tr><th>Typ / metoda</th><th>Opis</th></tr>
+    <tr><td><code>Audio::new()</code></td><td>Otwiera urządzenie (błąd = brak audio, gra działa dalej).</td></tr>
+    <tr><td><code>play_file / loop_file</code></td><td>Odtwarzanie pliku raz / w pętli.</td></tr>
+    <tr><td><code>play_clip / loop_clip</code></td><td>Odtwarzanie wczytanego klipu raz / w pętli.</td></tr>
+    <tr><td><code>Clip::from_file / from_bytes</code></td><td>Wczytanie dźwięku (plik / pamięć).</td></tr>
+    <tr><td><code>Sound::set_volume / pause / resume / stop</code></td><td>Kontrola odtwarzania.</td></tr>
+    <tr><td><code>Sound::is_finished()</code></td><td>Czy dźwięk skończył grać.</td></tr>
+  </table>
+  <h3>Dźwięk przestrzenny</h3>
+  <p>Głośność i stereo zależą od pozycji źródła względem słuchacza — idealne do
+  efektów „gdzieś obok" (kroki, strzały, rzeka).</p>
+<pre><code>audio.set_listener_position(gracz.pos);      <span class="c">// pozycja słuchacza</span>
+
+<span class="c">// dźwięk w punkcie świata — głośność i pan liczone automatycznie</span>
+<span class="k">if let</span> Ok(s) = audio.play_spatial(&amp;wybuch, Vec2::new(50.0, 20.0)) {
+    s.set_volume(1.0);
+    s.set_position(Vec2::new(60.0, 20.0));   <span class="c">// można go przesuwać</span>
+}
+<span class="k">let</span> ogien = audio.loop_spatial(&amp;trzask, Vec2::new(10.0, 5.0)); <span class="c">// pętla</span></code></pre>
+  <table>
+    <tr><th>Metoda</th><th>Opis</th></tr>
+    <tr><td><code>set_listener_position(pos)</code></td><td>Ustawia słuchacza (patrzy w +X).</td></tr>
+    <tr><td><code>play_spatial(clip, pos)</code></td><td>Odtwarza klip w punkcie świata.</td></tr>
+    <tr><td><code>loop_spatial(clip, pos)</code></td><td>Jak wyżej, w pętli.</td></tr>
+    <tr><td><code>SpatialSound::set_position(pos)</code></td><td>Przesuwa źródło w czasie.</td></tr>
+  </table>
+  <div class="note"><b>Ważne</b>trzymaj <code>Sound</code>/<code>SpatialSound</code>, dopóki
+  dźwięk ma grać — porzucenie zatrzymuje odtwarzanie. Obsługiwane formaty zależą od
+  rodio (WAV, OGG, FLAC, MP3).</div>
+</section>
+
+<section id="sceny">
+  <h2>Sceny i przełączanie</h2>
+  <p>Scena to samodzielny kawałek gry (menu, poziom, pauza). Implementujesz trait
+  <code>Scene</code>, a <code>SceneManager</code> trzyma stos scen i obsługuje
+  przejścia — <b>switch</b> (podmień), <b>push</b> (nałóż, np. menu pauzy) i
+  <b>pop</b> (zdejmij).</p>
+<pre><code><span class="k">struct</span> Menu;
+<span class="k">impl</span> Scene <span class="k">for</span> Menu {
+    <span class="k">fn</span> <span class="f">update</span>(&amp;<span class="k">mut</span> self, ctx: &amp;<span class="k">mut</span> Ctx) -&gt; Transition {
+        <span class="k">if</span> ctx.input.just_pressed(Key::Enter) {
+            Transition::Switch(Box::new(Gra))
+        } <span class="k">else</span> {
+            Transition::None
+        }
+    }
+}
+<span class="k">struct</span> Gra;
+<span class="k">impl</span> Scene <span class="k">for</span> Gra {
+    <span class="k">fn</span> <span class="f">update</span>(&amp;<span class="k">mut</span> self, ctx: &amp;<span class="k">mut</span> Ctx) -&gt; Transition {
+        <span class="k">if</span> ctx.input.just_pressed(Key::Escape) {
+            Transition::Push(Box::new(Pauza))  <span class="c">// pauza NAD grą</span>
+        } <span class="k">else</span> {
+            Transition::None
+        }
+    }
+}
+
+<span class="k">let mut</span> sceny = SceneManager::new();
+sceny.start(Box::new(Menu), ctx);
+<span class="c">// w pętli systemu:</span>
+<span class="k">if</span> sceny.update(ctx) { std::process::exit(0); }</code></pre>
+  <h3>Przejścia</h3>
+  <table>
+    <tr><th>Wariant</th><th>Działanie</th></tr>
+    <tr><td><code>Transition::None</code></td><td>Scena gra dalej.</td></tr>
+    <tr><td><code>Transition::Switch(s)</code></td><td>Podmień bieżącą scenę.</td></tr>
+    <tr><td><code>Transition::Push(s)</code></td><td>Nałóż nową scenę na wierzch.</td></tr>
+    <tr><td><code>Transition::Pop</code></td><td>Zdejmij bieżącą scenę, wróć do poprzedniej.</td></tr>
+    <tr><td><code>Transition::Quit</code></td><td>Zakończ grę (<code>update</code> zwraca <code>true</code>).</td></tr>
+  </table>
+  <div class="tip"><b>enter/exit</b><code>Scene</code> ma też <code>enter</code> (raz przy
+  aktywacji) i <code>exit</code> (raz przy dezaktywacji) — do ładowania/sprzątania
+  stanu sceny.</div>
+</section>
+
 <section id="elementy">
   <h2>Elementy gry (object / init / data)</h2>
   <p>Element to samodzielny fragment gry. Tworzysz go jednym poleceniem:</p>
@@ -482,6 +753,37 @@ cargo run -p uran-editor -- --map assets/maps/farm.xml</code></pre>
     elements::przeciwnik::object::update(ctx);
     <span class="c">// [uran:calls]</span>
 }</code></pre>
+</section>
+
+<section id="ffi">
+  <h2>FFI — delegowanie kodu do C# / C++</h2>
+  <p>Silnik jest w Rust, ale część logiki można napisać w innym języku i podpiąć przez
+  ABI C. <code>uran-ffi</code> daje typy zgodne z ABI (<code>CVec2</code>, <code>CRect</code>,
+  <code>CColor</code>), kontrakt wtyczki (<code>UranPlugin</code>) i hosta (<code>PluginHost</code>).</p>
+<pre><code><span class="c">// po stronie Rusta: host wywołuje wtyczkę (tabelę UranPlugin z DLL)</span>
+<span class="k">let</span> plugin = PluginHost::new(&amp;PLUGIN);
+plugin.init();
+plugin.update(ctx.dt());
+
+<span class="c">// eksportowane funkcje — można je wołać z C#/C++ (P/Invoke)</span>
+<span class="k">let</span> s = uran_vec2_add(CVec2::new(1.0, 2.0), CVec2::new(3.0, 4.0));</code></pre>
+  <h3>Kontrakt wtyczki</h3>
+  <p>Wtyczka (C#/C++) eksportuje jeden symbol <code>uran_plugin_get</code>, który zwraca
+  <code>*const UranPlugin</code> — tabelę wskaźników:</p>
+  <table>
+    <tr><th>Pole</th><th>Rola</th></tr>
+    <tr><td><code>name()</code></td><td>Nazwa wtyczki.</td></tr>
+    <tr><td><code>create()</code></td><td>Tworzy stan wtyczki (uchwyt <code>void*</code>).</td></tr>
+    <tr><td><code>init(state)</code></td><td>Raz na starcie.</td></tr>
+    <tr><td><code>update(state, dt)</code></td><td>Co klatkę.</td></tr>
+    <tr><td><code>destroy(state)</code></td><td>Zwalnia stan.</td></tr>
+  </table>
+  <p>Nagłówek C/C++ jest gotowy w <code>crates/uran-ffi/uran_ffi.h</code>; C# podpina się
+  przez P/Invoke (<code>[DllImport]</code>) z tymi samymi typami <code>struct</code>.</p>
+  <div class="note"><b>Przykład delegacji</b>napisz w C++ funkcje <code>init</code>/<code>update</code>,
+  zbuduj bibliotekę współdzieloną eksportującą <code>uran_plugin_get</code>, załaduj ją w grze
+  (np. <code>libloading</code>) i przekaż <code>UranPlugin</code> do <code>PluginHost</code>.
+  Reszta silnika (render, ECS, mapa, audio) zostaje w Rust.</div>
 </section>
 
 <section id="skroty">
@@ -515,7 +817,11 @@ ctx.load_image(path);                               ctx.load_font(path);</code><
   daje: <code>App</code>, <code>Ctx</code>, <code>Graphics</code>, <code>Camera2d</code>,
   <code>Input</code>/<code>Key</code>/<code>Mouse</code>, <code>Color</code>/<code>Rect</code>/<code>Vec2</code>,
   <code>TileMap</code>/<code>Tileset</code>/<code>Layer</code>/<code>TileProps</code>,
-  <code>World</code> (ECS) i <code>TextAlign</code>.</div>
+  <code>World</code> (ECS), <code>TextAlign</code>, <code>Audio</code>/<code>Clip</code>/<code>Sound</code>/<code>SpatialSound</code>,
+  <code>PhysicsWorld</code>/<code>PhysicsBody</code>, <code>Scene</code>/<code>SceneManager</code>/<code>Transition</code>,
+  <code>Canvas</code>/<code>Element</code>/<code>RectTransform</code>, <code>TiledMap</code>/<code>TiledObject</code>,
+  <code>CVec2</code>/<code>CRect</code>/<code>CColor</code>/<code>UranPlugin</code>/<code>PluginHost</code>
+  oraz typy 3D (<code>Renderer3d</code>, <code>Camera3d</code>, <code>DrawCmd</code>…).</div>
 </section>
 
 

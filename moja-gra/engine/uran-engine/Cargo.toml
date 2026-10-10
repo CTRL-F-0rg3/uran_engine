@@ -1,0 +1,15 @@
+[package]
+name = "uran-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uran-core.workspace = true
+uran-math.workspace = true
+uran-render.workspace = true
+uran-ecs.workspace = true
+uran-asset.workspace = true
+uran-tilemap.workspace = true
+pollster = "0.3"
+winit.workspace = true
+wgpu.workspace = true

@@ -19,7 +19,8 @@ winit = "0.30"
 glam = "0.25"
 ab_glyph = "0.2"      # rasteryzacja glifów (font atlas)
 image = { version = "0.25", default-features = false, features = ["png"] }
-rapier2d = "0.19"     # fizyka 2D (na razie nieużywana)
+rapier2d = "0.19"     # fizyka 2D (opakowana w uran-physics)
+rodio = "0.19"       # odtwarzanie dźwięku (uran-audio)
 tracing = "0.1"
 anyhow = "1.0"
 thiserror = "1.0"
@@ -38,3 +39,5 @@ uran-audio = { path = "crates/uran-audio" }
 uran-engine = { path = "uran-engine" }
 uran-tilemap = { path = "crates/uran-tilemap" }
 uran-anim = { path = "crates/uran-anim" }
+uran-ui = { path = "crates/uran-ui" }
+uran-ffi = { path = "crates/uran-ffi" }

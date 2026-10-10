@@ -1,0 +1,21 @@
+[package]
+name = "uran-render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu.workspace = true
+winit.workspace = true
+bytemuck.workspace = true
+ab_glyph.workspace = true
+uran-math.workspace = true
+uran-ecs.workspace = true
+uran-asset.workspace = true
+
+[dev-dependencies]
+# Naga to walidator WGSL, którego wgpu używa wewnętrznie. Dodajemy go
+# jawnie, żeby testy mogły SPRAWDZIĆ, że shader się kompiluje, zamiast
+# czekać na błąd walidacji dopiero przy pierwszym uruchomieniu gry.
+# Wersja musi zgadzać się z tą, którą wgpu 0.19 wciąga do siebie —
+# inaczej test parsowałby inną wersję WGSL niż ta, którą zobaczy GPU.
+naga = { version = "0.19", features = ["wgsl-in"] }

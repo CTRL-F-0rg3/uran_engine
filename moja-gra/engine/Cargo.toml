@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/uran-core",
+    "crates/uran-math",
+    "crates/uran-ecs",
+    "crates/uran-asset",
+    "crates/uran-render",
+    "crates/uran-tilemap",
+    "uran-engine",
+]
+
+[workspace.dependencies]
+wgpu = "0.19"
+winit = "0.30"
+glam = "0.25"
+ab_glyph = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+uran-core = { path = "crates/uran-core" }
+uran-math = { path = "crates/uran-math" }
+uran-ecs = { path = "crates/uran-ecs" }
+uran-asset = { path = "crates/uran-asset" }
+uran-render = { path = "crates/uran-render" }
+uran-tilemap = { path = "crates/uran-tilemap" }
+uran-engine = { path = "uran-engine" }

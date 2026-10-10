@@ -32,6 +32,10 @@
 
 use uran_math::{Rect, Vec2};
 
+mod rapier_world;
+
+pub use rapier_world::{BodyKind, PhysicsBody, PhysicsWorld};
+
 /// Statyczna przeszkoda — oś‑wyrównany prostokąt.
 ///
 /// Oddzielny typ zamiast gołego [`Rect`] po to, by przyszłe pola (np. „czy

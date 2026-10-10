@@ -1,0 +1,8 @@
+[package]
+name = "uran-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Interfejs FFI — delegowanie części kodu do C#/C++"
+
+[dependencies]
+uran-math.workspace = true

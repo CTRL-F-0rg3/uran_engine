@@ -1,0 +1,11 @@
+[package]
+name = "uran-ui"
+version = "0.1.0"
+edition = "2021"
+description = "UI w stylu Canvas: RectTransform (anchor/pivot), obrazy, tekst, przyciski"
+
+[dependencies]
+uran-math.workspace = true
+uran-asset.workspace = true
+uran-ecs.workspace = true
+uran-render.workspace = true

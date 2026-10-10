@@ -112,6 +112,30 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Wczytuje mapę z programu **Tiled** (`.tmx`) razem z warstwami obiektów.
+    ///
+    /// Zwraca `TiledMap { map, objects }` — `map` to zwykła [`TileMap`],
+    /// a `objects` to obiekty z warstw obiektów (spawny, strefy, kolizje).
+    pub fn load_tiled_map(&mut self, path: &str) -> Option<uran_tilemap::TiledMap> {
+        match uran_tilemap::load_tmx(path, self.assets) {
+            Ok(tiled) => {
+                println!(
+                    "🗺  mapa Tiled `{}`: {}x{} kafli, {} warstw, {} obiektów",
+                    path,
+                    tiled.map.width(),
+                    tiled.map.height(),
+                    tiled.map.layers.len(),
+                    tiled.objects.len()
+                );
+                Some(tiled)
+            }
+            Err(e) => {
+                eprintln!("⚠️  nie udało się wczytać mapy Tiled `{path}`: {e}");
+                None
+            }
+        }
+    }
+
     /// Delta czasu w sekundach — skrót najczęstszej operacji w grze.
     pub fn dt(&self) -> f32 {
         self.time.delta_seconds()
@@ -190,6 +214,28 @@ impl<'a> Ctx<'a> {
     pub fn set_post_fx(&mut self, settings: PostFxSettings) {
         if let Some(r) = self.renderer.as_mut() {
             r.set_post_fx(settings);
+        }
+    }
+
+    /// Rysuje canvas UI — tryb ekranu przełącza się sam w `screen_space()`,
+    /// tryb świata rysuje w widoku kamery.
+    ///
+    /// ```ignore
+    /// ctx.ui(&hud); // canvas HUD zbudowany przez uran_ui::Canvas::screen(...)
+    /// ```
+    pub fn ui(&mut self, canvas: &crate::ui::Canvas) {
+        match canvas.mode {
+            crate::ui::CanvasMode::Screen => {
+                let root =
+                    uran_math::Rect::from_xywh(0.0, 0.0, self.window.size.x, self.window.size.y);
+                self.gfx.screen_space();
+                canvas.draw(&mut self.gfx, self.font, root);
+                self.gfx.world_space();
+            }
+            crate::ui::CanvasMode::World => {
+                let root = self.camera.visible_rect(self.window.size);
+                canvas.draw(&mut self.gfx, self.font, root);
+            }
         }
     }
 }

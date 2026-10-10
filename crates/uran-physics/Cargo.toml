@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 uran-math.workspace = true
+rapier2d.workspace = true

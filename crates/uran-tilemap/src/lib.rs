@@ -31,6 +31,7 @@
 pub mod autotile;
 pub mod layer;
 pub mod map;
+pub mod tiled;
 pub mod tileset;
 pub mod xml;
 
@@ -39,6 +40,7 @@ pub use layer::{
     flags_from_packed, index_from_packed, pack_tile, TileLayer, FLAGS_MASK, INDEX_MASK, TILE_EMPTY,
 };
 pub use map::{Layer, MapError, TileId, TileMap, TileProps};
+pub use tiled::{load_tmx, TiledMap, TiledObject};
 pub use tileset::{TileFlags, TileRef, Tileset};
 
 /// Wszystko, czego typowo potrzebuje gra korzystająca z tilemapy.
